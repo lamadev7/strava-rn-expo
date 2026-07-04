@@ -17,13 +17,22 @@ Non-goals (v1–v2): social feed, accounts, cloud sync, segments, paid services.
 |---|---|---|
 | Framework | Expo SDK 57, React Native, React, TypeScript | expo ~57.0, RN 0.86, React 19.2, TS ~6.0 |
 | Routing | expo-router | ~57.0 (no longer built on React Navigation since SDK 56) |
-| Maps | react-native-maps | Apple Maps provider on iOS — keyless. MapLibre + OpenFreeMap deferred to Android phase |
+| Maps | react-native-maps | Apple Maps provider on iOS — keyless. Subject to the M1 basemap gate (§2.1) |
 | Location | expo-location + expo-task-manager | background = dev build only |
 | Database | expo-sqlite + Drizzle ORM | WAL mode; `useLiveQuery` for reactive reads |
 | Preferences | expo-sqlite/kv-store | replaces AsyncStorage |
 | Geometry | @turf/turf, curve-matcher, geojson-path-finder | templates / Fréchet scoring / on-device Dijkstra |
 | Charts | victory-native XL (Skia) | Skia bundled in Expo Go since SDK 46 |
 | State | zustand | ~5 fields only; SQLite is source of truth |
+
+### 2.1 M1 basemap decision gate
+
+The visual basemap (Apple Maps) and the routing data (OSM via Overpass/ORS) are independent layers. Routes are computed on OSM and drawn as overlays; if the basemap does not render a footpath the route legitimately uses, the route *looks* like it crosses empty ground — a trust problem, not a correctness problem. Mismatch risk is highest outside Apple's detailed-map regions (US/EU major cities).
+
+**Gate, evaluated at M1 in the developer's own running area:**
+- Apple basemap renders local footpaths → keep `react-native-maps` for MVP.
+- Basemap is bare where OSM is rich → switch to `@maplibre/maplibre-react-native` + OpenFreeMap tiles at M1 (OSM-rendered tiles = same dataset as routing = visual consistency; dev build already required; $0, keyless).
+- Regardless of outcome: satellite/hybrid toggle on route-preview so users can verify routes against imagery.
 
 **Workflow**: development build from day 1 (`expo-dev-client`, local `npx expo run:ios`). Never hand-edit `ios/`/`android/` — SDK 57 `expo prebuild` clears and regenerates them; all native config lives in `app.json` config plugins.
 
@@ -275,6 +284,7 @@ Allowed resequencing: M5 before M3 if motivation needs an early payoff (shape pr
 | 2026-07-04 | (B) predicted score = mini deep-fit with real optimizer, never standalone heuristics |
 | 2026-07-04 | While-Using permission is the happy path; Always optional |
 | 2026-07-04 | `pausesUpdatesAutomatically: false` during active recording |
+| 2026-07-04 | M1 basemap gate (§2.1): field-check Apple Maps footpath rendering in own area; switch to MapLibre + OpenFreeMap if bare. Satellite toggle on route-preview either way |
 
 ## 12. References
 
