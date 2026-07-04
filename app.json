@@ -1,12 +1,12 @@
 {
   "expo": {
-    "name": "my-app",
+    "name": "Trace",
     "slug": "my-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -26,9 +26,16 @@
     "plugins": [
       "expo-router",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Trace uses your location to draw your route and live stats while you record an activity.",
+          "locationAlwaysAndWhenInUsePermission": "Trace uses your location to keep recording your route when the screen is off."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#0E120C",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }

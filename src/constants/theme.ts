@@ -1,40 +1,53 @@
 /**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ * Trace design tokens — extracted from docs/Strava Shapes - Mockups (standalone).html
+ * Electric lime on green-cast near-black. The app commits to the dark world;
+ * light mode maps to the same palette (design decision, see TECH_SPEC).
  */
 
 import '@/global.css';
 
 import { Platform } from 'react-native';
 
-export const Colors = {
-  light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
-  },
-  dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
-  },
+const trace = {
+  text: '#F2F6EA',
+  background: '#0E120C',
+  backgroundElement: '#171C15',
+  backgroundSelected: '#242B22',
+  textSecondary: '#8D9A8C',
+  textMuted: '#6C7566',
+  accent: '#CDFF3C',
+  onAccent: '#141900',
+  border: '#2F382C',
+  /** semantic tiers — never used as brand accent */
+  tierGreat: '#5CE3A1',
+  tierOk: '#FFC24B',
+  tierTricky: '#98A29B',
+  danger: '#FF6A5C',
 } as const;
+
+export const Colors = {
+  light: trace,
+  dark: trace,
+} as const;
+
+export const Trace = trace;
 
 export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
+/** Loaded in app/_layout.tsx via @expo-google-fonts packages */
+export const TraceFonts = {
+  display: 'SpaceGrotesk_600SemiBold',
+  displayMedium: 'SpaceGrotesk_500Medium',
+  body: 'SpaceGrotesk_400Regular',
+  mono: 'SplineSansMono_500Medium',
+  monoBold: 'SplineSansMono_600SemiBold',
+} as const;
+
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
   },
   default: {

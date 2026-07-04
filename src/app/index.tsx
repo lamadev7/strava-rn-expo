@@ -1,98 +1,291 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import MapView, { Polyline } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
+import { formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
+import { useRecordingStore } from '@/features/recording/store';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
+  { key: 'run', label: 'Run' },
+  { key: 'ride', label: 'Ride' },
+  { key: 'walk', label: 'Walk' },
+];
+
+/** Dark map style is Google-provider-only; on Apple Maps we rely on system dark mode. */
+export default function RecordScreen() {
+  const mapRef = useRef<MapView>(null);
+  const status = useRecordingStore((s) => s.status);
+  const activityType = useRecordingStore((s) => s.activityType);
+  const setActivityType = useRecordingStore((s) => s.setActivityType);
+  const points = useRecordingStore((s) => s.points);
+  const distanceM = useRecordingStore((s) => s.distanceM);
+  const permissionDenied = useRecordingStore((s) => s.permissionDenied);
+  const { start, pause, resume, stop, elapsedS } = useRecordingStore.getState();
+
+  // 1 Hz clock for duration/pace display while recording (TECH_SPEC §5.5 throttle)
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (status !== 'recording') return;
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [status]);
+
+  // Camera follows the latest accepted point
+  const lastPoint = points[points.length - 1];
+  useEffect(() => {
+    if (!lastPoint) return;
+    mapRef.current?.animateCamera(
+      { center: { latitude: lastPoint.lat, longitude: lastPoint.lng } },
+      { duration: 500 },
     );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+  }, [lastPoint]);
+
+  const durationS = elapsedS();
+  const recording = status === 'recording';
+  const paused = status === 'paused';
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+    <View style={styles.container}>
+      <MapView
+        ref={mapRef}
+        style={StyleSheet.absoluteFill}
+        showsUserLocation
+        followsUserLocation={status === 'idle'}
+        userInterfaceStyle="dark"
+        showsCompass={false}>
+        {points.length > 1 && (
+          <Polyline
+            coordinates={points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
+            strokeColor={Trace.accent}
+            strokeWidth={5}
+            lineCap="round"
+            lineJoin="round"
+          />
+        )}
+      </MapView>
+
+      <SafeAreaView style={styles.overlay} pointerEvents="box-none">
+        {/* GPS / permission chip */}
+        <View style={styles.topRow} pointerEvents="box-none">
+          {permissionDenied ? (
+            <Pressable style={[styles.chip, styles.chipDanger]} onPress={() => Linking.openSettings()}>
+              <Text style={[styles.chipText, { color: Trace.danger }]}>
+                Location off — tap to open Settings
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.chip}>
+              <View style={styles.gpsDot} />
+              <Text style={styles.chipText}>
+                {lastPoint?.accuracy != null ? `GPS locked · ±${Math.round(lastPoint.accuracy)} m` : 'GPS ready'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.bottom} pointerEvents="box-none">
+          {(recording || paused) && (
+            <View style={styles.statsCard}>
+              <View style={styles.statsHeader}>
+                <Text style={styles.duration}>{formatDuration(durationS)}</Text>
+                {paused && <Text style={styles.pausedBadge}>PAUSED</Text>}
+              </View>
+              <View style={styles.statsRow}>
+                <Stat value={formatKm(distanceM)} label="KM" />
+                <View style={styles.statDivider} />
+                <Stat value={formatPace(distanceM, durationS)} label="PACE /KM" />
+                <View style={styles.statDivider} />
+                <Stat value={String(points.length)} label="POINTS" />
+              </View>
+            </View>
+          )}
+
+          {status === 'idle' && (
+            <View style={styles.segment}>
+              {ACTIVITY_TYPES.map(({ key, label }) => (
+                <Pressable
+                  key={key}
+                  style={[styles.segmentItem, activityType === key && styles.segmentItemActive]}
+                  onPress={() => setActivityType(key)}>
+                  <Text
+                    style={[styles.segmentText, activityType === key && styles.segmentTextActive]}>
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.controls} pointerEvents="box-none">
+            {status === 'idle' && (
+              <Pressable style={styles.startButton} onPress={start}>
+                <Text style={styles.startText}>START</Text>
+              </Pressable>
+            )}
+            {recording && (
+              <>
+                <Pressable style={styles.secondaryButton} onPress={pause}>
+                  <Text style={styles.secondaryText}>PAUSE</Text>
+                </Pressable>
+                <Pressable style={styles.stopButton} onPress={stop}>
+                  <Text style={styles.stopText}>STOP</Text>
+                </Pressable>
+              </>
+            )}
+            {paused && (
+              <>
+                <Pressable style={styles.startButtonSmall} onPress={resume}>
+                  <Text style={styles.startText}>RESUME</Text>
+                </Pressable>
+                <Pressable style={styles.stopButton} onPress={stop}>
+                  <Text style={styles.stopText}>STOP</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+
+          {status === 'idle' && <Text style={styles.hint}>Ready when you are.</Text>}
+        </View>
+      </SafeAreaView>
+    </View>
   );
 }
 
-export default function HomeScreen() {
+function Stat({ value, label }: { value: string; label: string }) {
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+    <View style={styles.stat}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  container: { flex: 1, backgroundColor: Trace.background },
+  overlay: { flex: 1, justifyContent: 'space-between' },
+  topRow: { alignItems: 'center', paddingTop: 8 },
+  chip: {
     flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    gap: 8,
+    backgroundColor: `${Trace.backgroundElement}E6`,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Trace.border,
   },
-  heroSection: {
+  chipDanger: { borderColor: Trace.danger },
+  chipText: {
+    color: Trace.textSecondary,
+    fontFamily: TraceFonts.displayMedium,
+    fontSize: 12,
+    letterSpacing: 0.3,
+  },
+  gpsDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Trace.tierGreat },
+  bottom: { paddingHorizontal: 16, paddingBottom: BottomTabInset + 12, gap: 12 },
+  statsCard: {
+    backgroundColor: `${Trace.backgroundElement}F2`,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: Trace.border,
+    gap: 14,
+  },
+  statsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  duration: {
+    color: Trace.text,
+    fontFamily: TraceFonts.monoBold,
+    fontSize: 40,
+    fontVariant: ['tabular-nums'],
+  },
+  pausedBadge: {
+    color: Trace.tierOk,
+    fontFamily: TraceFonts.display,
+    fontSize: 12,
+    letterSpacing: 1.5,
+  },
+  statsRow: { flexDirection: 'row', alignItems: 'center' },
+  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  statValue: {
+    color: Trace.text,
+    fontFamily: TraceFonts.mono,
+    fontSize: 22,
+    fontVariant: ['tabular-nums'],
+  },
+  statLabel: {
+    color: Trace.textMuted,
+    fontFamily: TraceFonts.displayMedium,
+    fontSize: 10,
+    letterSpacing: 1.2,
+  },
+  statDivider: { width: 1, height: 28, backgroundColor: Trace.border },
+  segment: {
+    flexDirection: 'row',
+    backgroundColor: `${Trace.backgroundElement}E6`,
+    borderRadius: 999,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: Trace.border,
+    alignSelf: 'center',
+  },
+  segmentItem: { paddingHorizontal: 22, paddingVertical: 9, borderRadius: 999 },
+  segmentItemActive: { backgroundColor: Trace.backgroundSelected },
+  segmentText: { color: Trace.textSecondary, fontFamily: TraceFonts.displayMedium, fontSize: 14 },
+  segmentTextActive: { color: Trace.accent },
+  controls: { flexDirection: 'row', justifyContent: 'center', gap: 14 },
+  startButton: {
+    backgroundColor: Trace.accent,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
   },
-  title: {
+  startButtonSmall: {
+    backgroundColor: Trace.accent,
+    borderRadius: 999,
+    paddingHorizontal: 30,
+    paddingVertical: 18,
+  },
+  startText: {
+    color: Trace.onAccent,
+    fontFamily: TraceFonts.display,
+    fontSize: 16,
+    letterSpacing: 1.5,
+  },
+  secondaryButton: {
+    backgroundColor: Trace.backgroundElement,
+    borderRadius: 999,
+    paddingHorizontal: 30,
+    paddingVertical: 18,
+    borderWidth: 1,
+    borderColor: Trace.border,
+  },
+  secondaryText: {
+    color: Trace.text,
+    fontFamily: TraceFonts.display,
+    fontSize: 16,
+    letterSpacing: 1.5,
+  },
+  stopButton: {
+    backgroundColor: Trace.danger,
+    borderRadius: 999,
+    paddingHorizontal: 30,
+    paddingVertical: 18,
+  },
+  stopText: {
+    color: '#2A1215',
+    fontFamily: TraceFonts.display,
+    fontSize: 16,
+    letterSpacing: 1.5,
+  },
+  hint: {
+    color: Trace.textMuted,
+    fontFamily: TraceFonts.body,
+    fontSize: 13,
     textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
   },
 });
