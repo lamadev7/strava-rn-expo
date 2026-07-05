@@ -1,9 +1,13 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, UserLocation } from '@maplibre/maplibre-react-native';
+import { eq } from 'drizzle-orm';
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useEffect, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
+import { db } from '@/db/client';
+import { activities, trackPoints } from '@/db/schema';
 import { formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
 import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
@@ -20,10 +24,25 @@ export default function RecordScreen() {
   const status = useRecordingStore((s) => s.status);
   const activityType = useRecordingStore((s) => s.activityType);
   const setActivityType = useRecordingStore((s) => s.setActivityType);
-  const points = useRecordingStore((s) => s.points);
-  const distanceM = useRecordingStore((s) => s.distanceM);
+  const activityId = useRecordingStore((s) => s.activityId);
   const permissionDenied = useRecordingStore((s) => s.permissionDenied);
   const { start, pause, resume, stop, elapsedS } = useRecordingStore.getState();
+
+  // M3: the background task writes to SQLite; this screen just reads it live.
+  const { data: pointRows } = useLiveQuery(
+    db
+      .select()
+      .from(trackPoints)
+      .where(eq(trackPoints.activityId, activityId ?? ''))
+      .orderBy(trackPoints.seq),
+    [activityId],
+  );
+  const { data: activityRows } = useLiveQuery(
+    db.select().from(activities).where(eq(activities.id, activityId ?? '')),
+    [activityId],
+  );
+  const points = pointRows ?? [];
+  const distanceM = activityRows?.[0]?.distanceM ?? 0;
 
   // 1 Hz clock for duration/pace display while recording (TECH_SPEC §5.5 throttle)
   const [, tick] = useState(0);

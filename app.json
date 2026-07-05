@@ -35,7 +35,10 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Trace uses your location to draw your route and live stats while you record an activity.",
-          "locationAlwaysAndWhenInUsePermission": "Trace uses your location to keep recording your route when the screen is off."
+          "locationAlwaysAndWhenInUsePermission": "Trace uses your location to keep recording your route when the screen is off.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [
