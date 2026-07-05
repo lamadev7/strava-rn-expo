@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
+import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
 
 const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
   { key: 'run', label: 'Run' },
@@ -13,10 +14,9 @@ const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
   { key: 'walk', label: 'Walk' },
 ];
 
-/** OpenFreeMap dark style — same OSM data the shape engine routes on (TECH_SPEC §2.1) */
-const MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
-
 export default function RecordScreen() {
+  const styleKey = useMapStyle((s) => s.styleKey);
+  const toggleStyle = useMapStyle((s) => s.toggle);
   const status = useRecordingStore((s) => s.status);
   const activityType = useRecordingStore((s) => s.activityType);
   const setActivityType = useRecordingStore((s) => s.setActivityType);
@@ -49,7 +49,7 @@ export default function RecordScreen() {
 
   return (
     <View style={styles.container}>
-      <MapLibreMap mapStyle={MAP_STYLE} style={StyleSheet.absoluteFill}>
+      <MapLibreMap mapStyle={MAP_STYLES[styleKey]} style={StyleSheet.absoluteFill}>
         {/* While recording, follow the latest accepted point; idle tracks the OS puck */}
         <Camera
           initialViewState={{ zoom: 15 }}
@@ -76,8 +76,11 @@ export default function RecordScreen() {
       </MapLibreMap>
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
-        {/* GPS / permission chip */}
+        {/* GPS / permission chip + style toggle */}
         <View style={styles.topRow} pointerEvents="box-none">
+          <Pressable style={styles.styleToggle} onPress={toggleStyle}>
+            <Text style={styles.chipText}>{styleKey === 'dark' ? 'Detail' : 'Dark'}</Text>
+          </Pressable>
           {permissionDenied ? (
             <Pressable style={[styles.chip, styles.chipDanger]} onPress={() => Linking.openSettings()}>
               <Text style={[styles.chipText, { color: Trace.danger }]}>
@@ -174,7 +177,21 @@ function Stat({ value, label }: { value: string; label: string }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Trace.background },
   overlay: { flex: 1, justifyContent: 'space-between' },
-  topRow: { alignItems: 'center', paddingTop: 8 },
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 8,
+  },
+  styleToggle: {
+    backgroundColor: `${Trace.backgroundElement}E6`,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: Trace.border,
+  },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

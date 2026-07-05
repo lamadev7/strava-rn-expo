@@ -8,11 +8,10 @@ import {
   SplineSansMono_500Medium,
   SplineSansMono_600SemiBold,
 } from '@expo-google-fonts/spline-sans-mono';
-import { DarkTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 
-import AppTabs from '@/components/app-tabs';
 import { Trace } from '@/constants/theme';
 
 SplashScreen.preventAutoHideAsync();
@@ -46,7 +45,10 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={traceTheme}>
-      <AppTabs />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="activity/[id]" options={{ presentation: 'card' }} />
+      </Stack>
     </ThemeProvider>
   );
 }

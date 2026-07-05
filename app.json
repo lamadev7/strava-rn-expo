@@ -9,7 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.anonymous.my-app"
+      "bundleIdentifier": "com.parbatlama.trace"
     },
     "android": {
       "adaptiveIcon": {

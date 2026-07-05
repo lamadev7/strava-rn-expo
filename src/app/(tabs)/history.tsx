@@ -1,4 +1,5 @@
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
@@ -37,13 +38,16 @@ export default function HistoryScreen() {
 }
 
 function ActivityRow({ activity }: { activity: CompletedActivity }) {
+  const router = useRouter();
   const when = new Date(activity.startedAt).toLocaleString(undefined, {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
   });
   return (
-    <View style={styles.row}>
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      onPress={() => router.push(`/activity/${activity.id}`)}>
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>
           {TYPE_LABEL[activity.type]} · {when}
@@ -53,8 +57,8 @@ function ActivityRow({ activity }: { activity: CompletedActivity }) {
           {formatPace(activity.distanceM, activity.durationS)}
         </Text>
       </View>
-      <Text style={styles.rowPoints}>{activity.points.length} pts</Text>
-    </View>
+      <Text style={styles.rowChevron}>›</Text>
+    </Pressable>
   );
 }
 
@@ -82,7 +86,8 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontVariant: ['tabular-nums'],
   },
-  rowPoints: { color: Trace.textMuted, fontFamily: TraceFonts.mono, fontSize: 12 },
+  rowPressed: { opacity: 0.7 },
+  rowChevron: { color: Trace.textMuted, fontFamily: TraceFonts.display, fontSize: 22 },
   empty: {
     backgroundColor: Trace.backgroundElement,
     borderRadius: 20,
