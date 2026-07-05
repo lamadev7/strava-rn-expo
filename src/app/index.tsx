@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, UserLocation } from '@maplibre/maplibre-react-native';
+import { useEffect, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Polyline } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
@@ -13,9 +13,10 @@ const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
   { key: 'walk', label: 'Walk' },
 ];
 
-/** Dark map style is Google-provider-only; on Apple Maps we rely on system dark mode. */
+/** OpenFreeMap dark style — same OSM data the shape engine routes on (TECH_SPEC §2.1) */
+const MAP_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+
 export default function RecordScreen() {
-  const mapRef = useRef<MapView>(null);
   const status = useRecordingStore((s) => s.status);
   const activityType = useRecordingStore((s) => s.activityType);
   const setActivityType = useRecordingStore((s) => s.setActivityType);
@@ -32,39 +33,47 @@ export default function RecordScreen() {
     return () => clearInterval(id);
   }, [status]);
 
-  // Camera follows the latest accepted point
   const lastPoint = points[points.length - 1];
-  useEffect(() => {
-    if (!lastPoint) return;
-    mapRef.current?.animateCamera(
-      { center: { latitude: lastPoint.lat, longitude: lastPoint.lng } },
-      { duration: 500 },
-    );
-  }, [lastPoint]);
-
   const durationS = elapsedS();
   const recording = status === 'recording';
   const paused = status === 'paused';
 
+  const trail: GeoJSON.Feature<GeoJSON.LineString> | null =
+    points.length > 1
+      ? {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: points.map((p) => [p.lng, p.lat]) },
+        }
+      : null;
+
   return (
     <View style={styles.container}>
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFill}
-        showsUserLocation
-        followsUserLocation={status === 'idle'}
-        userInterfaceStyle="dark"
-        showsCompass={false}>
-        {points.length > 1 && (
-          <Polyline
-            coordinates={points.map((p) => ({ latitude: p.lat, longitude: p.lng }))}
-            strokeColor={Trace.accent}
-            strokeWidth={5}
-            lineCap="round"
-            lineJoin="round"
-          />
+      <MapLibreMap mapStyle={MAP_STYLE} style={StyleSheet.absoluteFill}>
+        {/* While recording, follow the latest accepted point; idle tracks the OS puck */}
+        <Camera
+          initialViewState={{ zoom: 15 }}
+          trackUserLocation={recording || paused ? undefined : 'default'}
+          {...(lastPoint && (recording || paused)
+            ? { center: [lastPoint.lng, lastPoint.lat], zoom: 16, duration: 500 }
+            : {})}
+        />
+        <UserLocation animated accuracy />
+        {trail && (
+          <GeoJSONSource id="trail" data={trail}>
+            <Layer
+              id="trail-line"
+              type="line"
+              style={{
+                lineColor: Trace.accent,
+                lineWidth: 5,
+                lineCap: 'round',
+                lineJoin: 'round',
+              }}
+            />
+          </GeoJSONSource>
         )}
-      </MapView>
+      </MapLibreMap>
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
         {/* GPS / permission chip */}
