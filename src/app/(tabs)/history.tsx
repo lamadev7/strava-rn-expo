@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
@@ -39,15 +39,22 @@ export default function HistoryScreen() {
 
 function ActivityRow({ activity }: { activity: CompletedActivity }) {
   const router = useRouter();
+  const deleteActivity = useRecordingStore((s) => s.deleteActivity);
   const when = new Date(activity.startedAt).toLocaleString(undefined, {
     weekday: 'short',
     hour: 'numeric',
     minute: '2-digit',
   });
+  const confirmDelete = () =>
+    Alert.alert('Delete activity?', `${TYPE_LABEL[activity.type]} · ${when} — gone for good.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteActivity(activity.id) },
+    ]);
   return (
     <Pressable
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-      onPress={() => router.push(`/activity/${activity.id}`)}>
+      onPress={() => router.push(`/activity/${activity.id}`)}
+      onLongPress={confirmDelete}>
       <View style={styles.rowText}>
         <Text style={styles.rowTitle}>
           {TYPE_LABEL[activity.type]} · {when}

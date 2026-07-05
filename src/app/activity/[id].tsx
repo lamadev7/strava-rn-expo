@@ -1,6 +1,6 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap } from '@maplibre/maplibre-react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Trace, TraceFonts } from '@/constants/theme';
@@ -12,9 +12,24 @@ const TYPE_LABEL = { run: 'Run', ride: 'Ride', walk: 'Walk' } as const;
 
 export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
   const activity = useRecordingStore((s) => s.completed.find((a) => a.id === id));
+  const deleteActivity = useRecordingStore((s) => s.deleteActivity);
   const styleKey = useMapStyle((s) => s.styleKey);
   const toggleStyle = useMapStyle((s) => s.toggle);
+
+  const confirmDelete = () =>
+    Alert.alert('Delete activity?', 'Gone for good.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          if (id) deleteActivity(id);
+          router.back();
+        },
+      },
+    ]);
 
   if (!activity) {
     return (
@@ -91,7 +106,12 @@ export default function ActivityDetailScreen() {
           <View style={styles.divider} />
           <Stat value={String(Math.round(elevationGainM(activity.points)))} label="ELEV M" />
         </View>
-        <Text style={styles.meta}>{activity.points.length} GPS points recorded</Text>
+        <View style={styles.sheetFooter}>
+          <Text style={styles.meta}>{activity.points.length} GPS points recorded</Text>
+          <Pressable style={styles.deleteButton} onPress={confirmDelete}>
+            <Text style={styles.deleteText}>Delete</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     </View>
   );
@@ -145,5 +165,14 @@ const styles = StyleSheet.create({
   },
   divider: { width: 1, height: 28, backgroundColor: Trace.border },
   meta: { color: Trace.textMuted, fontFamily: TraceFonts.body, fontSize: 12.5 },
+  sheetFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  deleteButton: {
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Trace.danger,
+  },
+  deleteText: { color: Trace.danger, fontFamily: TraceFonts.displayMedium, fontSize: 13 },
   missing: { color: Trace.textSecondary, fontFamily: TraceFonts.body, fontSize: 14, padding: 24 },
 });

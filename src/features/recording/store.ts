@@ -40,6 +40,7 @@ type RecordingState = {
   resume: () => Promise<void>;
   stop: () => void;
   discard: () => void;
+  deleteActivity: (id: string) => void;
   elapsedS: () => number;
 };
 
@@ -147,6 +148,10 @@ export const useRecordingStore = create<RecordingState>((set, get) => {
         distanceM: 0,
         completed: [activity, ...completed],
       });
+    },
+
+    deleteActivity: (id) => {
+      set({ completed: get().completed.filter((a) => a.id !== id) });
     },
 
     discard: () => {
