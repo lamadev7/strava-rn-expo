@@ -1,50 +1,52 @@
+import { eq, inArray } from 'drizzle-orm';
 import * as Location from 'expo-location';
 import { create } from 'zustand';
 
-import { acceptPoint, toTrackPoint, totalDistanceM, type ActivityType, type TrackPoint } from './geo';
+import { db } from '@/db/client';
+import { activities, trackPoints } from '@/db/schema';
+
+import {
+  acceptPoint,
+  elevationGainM,
+  toTrackPoint,
+  totalDistanceM,
+  type ActivityType,
+  type TrackPoint,
+} from './geo';
 
 /**
- * M1 scope: foreground recording, in-memory session storage.
- * M2 replaces `completed` with SQLite (TECH_SPEC §4/§5); M3 moves ingestion
- * into an expo-task-manager background task. The invariant to preserve then:
- * writers append points, the UI only reads.
+ * M2: SQLite is the source of truth (TECH_SPEC §5.1). The store writes every
+ * accepted point to track_points and keeps an in-memory copy of the ACTIVE
+ * activity's points for the live map trail. History/detail read the DB via
+ * useLiveQuery. M3 moves ingestion into a background task — the write path
+ * (DB insert per accepted point) is already shaped for that.
  */
-
-export type CompletedActivity = {
-  id: string;
-  type: ActivityType;
-  startedAt: number;
-  endedAt: number;
-  distanceM: number;
-  durationS: number;
-  points: TrackPoint[];
-};
 
 export type RecordingStatus = 'idle' | 'recording' | 'paused';
 
 type RecordingState = {
   status: RecordingStatus;
   activityType: ActivityType;
+  activityId: string | null;
   startedAt: number | null;
-  /** moving-time accumulator: excludes paused stretches */
   activeSinceMs: number | null;
   accumulatedS: number;
   points: TrackPoint[];
   distanceM: number;
-  completed: CompletedActivity[];
   permissionDenied: boolean;
 
   setActivityType: (t: ActivityType) => void;
   start: () => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
-  stop: () => void;
-  discard: () => void;
-  deleteActivity: (id: string) => void;
+  stop: () => Promise<void>;
+  deleteActivity: (id: string) => Promise<void>;
+  recoverOrphans: () => Promise<void>;
   elapsedS: () => number;
 };
 
 let subscription: Location.LocationSubscription | null = null;
+let seq = 0;
 
 async function watch(onPoint: (location: Location.LocationObject) => void): Promise<boolean> {
   const { status } = await Location.requestForegroundPermissionsAsync();
@@ -67,24 +69,28 @@ function stopWatching() {
 
 export const useRecordingStore = create<RecordingState>((set, get) => {
   const onLocation = (location: Location.LocationObject) => {
-    const { status, points, activityType, distanceM } = get();
-    if (status !== 'recording') return;
+    const { status, points, activityType, distanceM, activityId } = get();
+    if (status !== 'recording' || !activityId) return;
     const point = toTrackPoint(location);
     const previous = points[points.length - 1];
     if (!acceptPoint(point, previous, activityType)) return;
     const added = previous ? totalDistanceM([previous, point]) : 0;
     set({ points: [...points, point], distanceM: distanceM + added });
+    seq += 1;
+    db.insert(trackPoints)
+      .values({ activityId, seq, ...point })
+      .run();
   };
 
   return {
     status: 'idle',
     activityType: 'run',
+    activityId: null,
     startedAt: null,
     activeSinceMs: null,
     accumulatedS: 0,
     points: [],
     distanceM: 0,
-    completed: [],
     permissionDenied: false,
 
     setActivityType: (t) => {
@@ -98,10 +104,20 @@ export const useRecordingStore = create<RecordingState>((set, get) => {
         set({ permissionDenied: true });
         return;
       }
+      const startedAt = Date.now();
+      const activityId = `${startedAt}-${Math.random().toString(36).slice(2, 8)}`;
+      seq = 0;
+      await db.insert(activities).values({
+        id: activityId,
+        type: get().activityType,
+        status: 'recording',
+        startedAt,
+      });
       set({
         status: 'recording',
         permissionDenied: false,
-        startedAt: Date.now(),
+        activityId,
+        startedAt,
         activeSinceMs: Date.now(),
         accumulatedS: 0,
         points: [],
@@ -114,6 +130,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => {
       if (status !== 'recording') return;
       stopWatching();
       set({ status: 'paused', accumulatedS: elapsedS(), activeSinceMs: null });
+      const id = get().activityId;
+      if (id) db.update(activities).set({ status: 'paused' }).where(eq(activities.id, id)).run();
     },
 
     resume: async () => {
@@ -124,46 +142,75 @@ export const useRecordingStore = create<RecordingState>((set, get) => {
         return;
       }
       set({ status: 'recording', activeSinceMs: Date.now() });
+      const id = get().activityId;
+      if (id) db.update(activities).set({ status: 'recording' }).where(eq(activities.id, id)).run();
     },
 
-    stop: () => {
-      const { status, startedAt, activityType, points, distanceM, completed, elapsedS } = get();
-      if (status === 'idle' || startedAt === null) return;
+    stop: async () => {
+      const { status, activityId, points, distanceM, elapsedS } = get();
+      if (status === 'idle' || !activityId) return;
       stopWatching();
-      const activity: CompletedActivity = {
-        id: `${startedAt}`,
-        type: activityType,
-        startedAt,
-        endedAt: Date.now(),
-        distanceM,
-        durationS: elapsedS(),
-        points,
-      };
+      const durationS = Math.round(elapsedS());
+      await db
+        .update(activities)
+        .set({
+          status: 'complete',
+          endedAt: Date.now(),
+          distanceM,
+          durationS,
+          avgPaceSecPerKm: distanceM > 50 ? durationS / (distanceM / 1000) : null,
+          elevGainM: elevationGainM(points),
+        })
+        .where(eq(activities.id, activityId));
       set({
         status: 'idle',
-        startedAt: null,
-        activeSinceMs: null,
-        accumulatedS: 0,
-        points: [],
-        distanceM: 0,
-        completed: [activity, ...completed],
-      });
-    },
-
-    deleteActivity: (id) => {
-      set({ completed: get().completed.filter((a) => a.id !== id) });
-    },
-
-    discard: () => {
-      stopWatching();
-      set({
-        status: 'idle',
+        activityId: null,
         startedAt: null,
         activeSinceMs: null,
         accumulatedS: 0,
         points: [],
         distanceM: 0,
       });
+    },
+
+    deleteActivity: async (id) => {
+      await db.delete(activities).where(eq(activities.id, id));
+    },
+
+    /**
+     * Crash recovery (TECH_SPEC §5.1): finalize activities left in
+     * recording/paused by a killed app. Stats recomputed from stored points.
+     */
+    recoverOrphans: async () => {
+      const orphans = await db
+        .select()
+        .from(activities)
+        .where(inArray(activities.status, ['recording', 'paused']));
+      for (const orphan of orphans) {
+        const pts = await db
+          .select()
+          .from(trackPoints)
+          .where(eq(trackPoints.activityId, orphan.id))
+          .orderBy(trackPoints.seq);
+        if (pts.length < 2) {
+          await db.delete(activities).where(eq(activities.id, orphan.id));
+          continue;
+        }
+        const track: TrackPoint[] = pts;
+        const distanceM = totalDistanceM(track);
+        const durationS = Math.round((pts[pts.length - 1].timestamp - pts[0].timestamp) / 1000);
+        await db
+          .update(activities)
+          .set({
+            status: 'complete',
+            endedAt: pts[pts.length - 1].timestamp,
+            distanceM,
+            durationS,
+            avgPaceSecPerKm: distanceM > 50 ? durationS / (distanceM / 1000) : null,
+            elevGainM: elevationGainM(track),
+          })
+          .where(eq(activities.id, orphan.id));
+      }
     },
 
     elapsedS: () => {

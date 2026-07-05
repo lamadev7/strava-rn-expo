@@ -8,11 +8,16 @@ import {
   SplineSansMono_500Medium,
   SplineSansMono_600SemiBold,
 } from '@expo-google-fonts/spline-sans-mono';
+import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { Text } from 'react-native';
 
 import { Trace } from '@/constants/theme';
+import { db } from '@/db/client';
+import migrations from '@/db/migrations/migrations';
+import { useRecordingStore } from '@/features/recording/store';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -36,12 +41,19 @@ export default function RootLayout() {
     SplineSansMono_500Medium,
     SplineSansMono_600SemiBold,
   });
+  const { success: migrated, error: migrationError } = useMigrations(db, migrations);
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    if (fontsLoaded && migrated) {
+      SplashScreen.hideAsync();
+      useRecordingStore.getState().recoverOrphans();
+    }
+  }, [fontsLoaded, migrated]);
 
-  if (!fontsLoaded) return null;
+  if (migrationError) {
+    return <Text style={{ color: '#FF6A5C', padding: 40 }}>DB migration failed: {migrationError.message}</Text>;
+  }
+  if (!fontsLoaded || !migrated) return null;
 
   return (
     <ThemeProvider value={traceTheme}>

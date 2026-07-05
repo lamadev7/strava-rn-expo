@@ -1,16 +1,26 @@
+import { desc, eq } from 'drizzle-orm';
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useRouter } from 'expo-router';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
+import { db } from '@/db/client';
+import { activities, type ActivityRow } from '@/db/schema';
 import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
-import { useRecordingStore, type CompletedActivity } from '@/features/recording/store';
+import { useRecordingStore } from '@/features/recording/store';
 
 const TYPE_LABEL = { run: 'Run', ride: 'Ride', walk: 'Walk' } as const;
 
-/** M1: session-only list from the in-memory store. M2 swaps in SQLite + useLiveQuery. */
+/** M2: reads SQLite via useLiveQuery — updates live as recordings complete. */
 export default function HistoryScreen() {
-  const completed = useRecordingStore((s) => s.completed);
+  const { data } = useLiveQuery(
+    db
+      .select()
+      .from(activities)
+      .where(eq(activities.status, 'complete'))
+      .orderBy(desc(activities.startedAt)),
+  );
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -19,16 +29,15 @@ export default function HistoryScreen() {
         <Text style={styles.subtitle}>Every run&apos;s a doodle.</Text>
       </View>
       <FlatList
-        data={completed}
+        data={data ?? []}
         keyExtractor={(a) => a.id}
         contentContainerStyle={styles.list}
-        renderItem={({ item }) => <ActivityRow activity={item} />}
+        renderItem={({ item }) => <ActivityListRow activity={item} />}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Nothing drawn yet.</Text>
             <Text style={styles.emptyBody}>
-              Hit Record and take a walk — your first doodle lands here. (Activities live in
-              memory until the database ships; closing the app clears them.)
+              Hit Record and take a walk — your first doodle lands here, and it sticks around now.
             </Text>
           </View>
         }
@@ -37,7 +46,7 @@ export default function HistoryScreen() {
   );
 }
 
-function ActivityRow({ activity }: { activity: CompletedActivity }) {
+function ActivityListRow({ activity }: { activity: ActivityRow }) {
   const router = useRouter();
   const deleteActivity = useRecordingStore((s) => s.deleteActivity);
   const when = new Date(activity.startedAt).toLocaleString(undefined, {
@@ -85,6 +94,7 @@ const styles = StyleSheet.create({
     borderColor: Trace.border,
     gap: 12,
   },
+  rowPressed: { opacity: 0.7 },
   rowText: { flex: 1, gap: 3 },
   rowTitle: { color: Trace.text, fontFamily: TraceFonts.displayMedium, fontSize: 15 },
   rowMeta: {
@@ -93,7 +103,6 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontVariant: ['tabular-nums'],
   },
-  rowPressed: { opacity: 0.7 },
   rowChevron: { color: Trace.textMuted, fontFamily: TraceFonts.display, fontSize: 22 },
   empty: {
     backgroundColor: Trace.backgroundElement,

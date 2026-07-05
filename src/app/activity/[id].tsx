@@ -1,10 +1,14 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap } from '@maplibre/maplibre-react-native';
+import { eq } from 'drizzle-orm';
+import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Trace, TraceFonts } from '@/constants/theme';
-import { elevationGainM, formatDuration, formatKm, formatPace } from '@/features/recording/geo';
+import { db } from '@/db/client';
+import { activities, trackPoints } from '@/db/schema';
+import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
 import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
 
@@ -13,7 +17,15 @@ const TYPE_LABEL = { run: 'Run', ride: 'Ride', walk: 'Walk' } as const;
 export default function ActivityDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const activity = useRecordingStore((s) => s.completed.find((a) => a.id === id));
+  const { data: activityRows } = useLiveQuery(
+    db.select().from(activities).where(eq(activities.id, id ?? '')),
+    [id],
+  );
+  const { data: pointRows } = useLiveQuery(
+    db.select().from(trackPoints).where(eq(trackPoints.activityId, id ?? '')).orderBy(trackPoints.seq),
+    [id],
+  );
+  const activity = activityRows?.[0];
   const deleteActivity = useRecordingStore((s) => s.deleteActivity);
   const styleKey = useMapStyle((s) => s.styleKey);
   const toggleStyle = useMapStyle((s) => s.toggle);
@@ -34,12 +46,13 @@ export default function ActivityDetailScreen() {
   if (!activity) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.missing}>Activity not found (history is session-only until the database ships).</Text>
+        <Text style={styles.missing}>Activity not found.</Text>
       </SafeAreaView>
     );
   }
 
-  const coords = activity.points.map((p) => [p.lng, p.lat] as [number, number]);
+  const points = pointRows ?? [];
+  const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
   const lngs = coords.map((c) => c[0]);
   const lats = coords.map((c) => c[1]);
   const hasTrack = coords.length > 1;
@@ -104,10 +117,10 @@ export default function ActivityDetailScreen() {
           <View style={styles.divider} />
           <Stat value={formatPace(activity.distanceM, activity.durationS)} label="PACE /KM" />
           <View style={styles.divider} />
-          <Stat value={String(Math.round(elevationGainM(activity.points)))} label="ELEV M" />
+          <Stat value={String(Math.round(activity.elevGainM ?? 0))} label="ELEV M" />
         </View>
         <View style={styles.sheetFooter}>
-          <Text style={styles.meta}>{activity.points.length} GPS points recorded</Text>
+          <Text style={styles.meta}>{points.length} GPS points recorded</Text>
           <Pressable style={styles.deleteButton} onPress={confirmDelete}>
             <Text style={styles.deleteText}>Delete</Text>
           </Pressable>
