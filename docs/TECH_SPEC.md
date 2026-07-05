@@ -138,12 +138,18 @@ Location.startLocationUpdatesAsync(RECORDING_TASK, {
 
 Handler: receive batch → filter (§5.3) → single transaction insert into `track_points`.
 
-### 5.3 Point filter (garbage GPS)
+### 5.3 Precision pipeline (hardened 2026-07-05 — `gps-pipeline.ts`, unit-tested)
 
-Reject a point when any of:
-- `accuracy > 30` m
-- implied speed from previous accepted point > 12 m/s (run/walk) or > 25 m/s (ride)
-- duplicate timestamp / non-monotonic
+Stage order (Kalman always ingests; emission is a separate decision):
+1. **Warmup gate** — no anchor until a fix with accuracy ≤ 15 m (cold fixes jump wildly); after 10 s relax to the hard limit.
+2. **Hard gates** — reject: accuracy > 25 m (run/walk) / 35 m (ride); non-monotonic timestamp; implied speed > 12 m/s (run/walk) / 25 m/s (ride).
+3. **Kalman update** — 1D per axis; measurement noise = accuracy²; process noise 1.5/3/6 m/s (walk/run/ride). Outliers nudge the path, sharp fixes move it.
+4. **Emission gates** — store a point only when ALL hold:
+   - doppler speed (when reported) ≥ 0.4 m/s — chip-level stationary detection;
+   - smoothed-velocity EMA ≥ 0.5 m/s — the Kalman position itself is moving;
+   - smoothed step since last stored point ≥ max(5 m, 0.6 × accuracy).
+
+Result: standing still stores nothing (zero phantom distance); straight-line distance within ~5% of truth under ±5 m noise (see `gps-pipeline.test.ts`, `npm test`).
 
 ### 5.4 Derived stats
 
