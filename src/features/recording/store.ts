@@ -50,8 +50,11 @@ async function startUpdates(): Promise<boolean> {
   await Location.startLocationUpdatesAsync(RECORDING_TASK, {
     accuracy: Location.Accuracy.BestForNavigation,
     activityType: Location.ActivityType.Fitness,
-    distanceInterval: 5,
-    deferredUpdatesInterval: 5000,
+    // ~1 Hz continuous fixes: the pipeline gates what gets STORED, so raw
+    // delivery can be dense. distanceInterval > 0 or a deferred interval
+    // batches fixes for seconds and makes the live trail visibly lag.
+    timeInterval: 1000,
+    distanceInterval: 0,
     pausesUpdatesAutomatically: false,
     showsBackgroundLocationIndicator: true,
     foregroundService: {

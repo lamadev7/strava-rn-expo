@@ -89,7 +89,8 @@ export default function ActivityDetailScreen() {
                 <Layer
                   id="route-line"
                   type="line"
-                  style={{ lineColor: Trace.accent, lineWidth: 4, lineCap: 'round', lineJoin: 'round' }}
+                  paint={{ 'line-color': Trace.accent, 'line-width': 4 }}
+                  layout={{ 'line-cap': 'round', 'line-join': 'round' }}
                 />
               </GeoJSONSource>
             )}

@@ -1,7 +1,7 @@
-import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, UserLocation } from '@maplibre/maplibre-react-native';
+import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, UserLocation, type CameraRef } from '@maplibre/maplibre-react-native';
 import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -57,6 +57,17 @@ export default function RecordScreen() {
   const recording = status === 'recording';
   const paused = status === 'paused';
 
+  // Follow the latest accepted point imperatively: easeTo without a zoom key
+  // keeps the user's pinch zoom (declarative Camera props would re-apply a
+  // fixed zoom on every render and wipe it).
+  const cameraRef = useRef<CameraRef>(null);
+  const lastLng = lastPoint?.lng;
+  const lastLat = lastPoint?.lat;
+  useEffect(() => {
+    if (!(recording || paused) || lastLng == null || lastLat == null) return;
+    cameraRef.current?.easeTo({ center: [lastLng, lastLat], duration: 500 });
+  }, [recording, paused, lastLng, lastLat]);
+
   const trail: GeoJSON.Feature<GeoJSON.LineString> | null =
     points.length > 1
       ? {
@@ -69,13 +80,12 @@ export default function RecordScreen() {
   return (
     <View style={styles.container}>
       <MapLibreMap mapStyle={MAP_STYLES[styleKey]} style={StyleSheet.absoluteFill}>
-        {/* While recording, follow the latest accepted point; idle tracks the OS puck */}
+        {/* While recording, the effect above follows the latest accepted point
+            at the user's current zoom; idle tracks the OS puck */}
         <Camera
+          ref={cameraRef}
           initialViewState={{ zoom: 15 }}
           trackUserLocation={recording || paused ? undefined : 'default'}
-          {...(lastPoint && (recording || paused)
-            ? { center: [lastPoint.lng, lastPoint.lat], zoom: 16, duration: 500 }
-            : {})}
         />
         <UserLocation animated accuracy />
         {trail && (
@@ -83,12 +93,8 @@ export default function RecordScreen() {
             <Layer
               id="trail-line"
               type="line"
-              style={{
-                lineColor: Trace.accent,
-                lineWidth: 5,
-                lineCap: 'round',
-                lineJoin: 'round',
-              }}
+              paint={{ 'line-color': Trace.accent, 'line-width': 5 }}
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
             />
           </GeoJSONSource>
         )}
