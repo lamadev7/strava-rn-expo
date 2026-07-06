@@ -1,6 +1,6 @@
 import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
-/** TECH_SPEC §4 — M2 scope: activities + track_points (shape_routes/osm_networks arrive at M5/M6) */
+/** TECH_SPEC §4 — activities + track_points */
 
 export const activities = sqliteTable('activities', {
   id: text('id').primaryKey(),

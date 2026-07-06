@@ -1,9 +1,11 @@
 import { desc, eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useRouter } from 'expo-router';
-import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { ScalePressable } from '@/components/scale-pressable';
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
 import { activities, type ActivityRow } from '@/db/schema';
@@ -28,10 +30,11 @@ export default function HistoryScreen() {
         <Text style={styles.title}>History</Text>
         <Text style={styles.subtitle}>Every run&apos;s a doodle.</Text>
       </View>
-      <FlatList
+      <Animated.FlatList
         data={data ?? []}
         keyExtractor={(a) => a.id}
         contentContainerStyle={styles.list}
+        itemLayoutAnimation={LinearTransition.springify().damping(18)}
         renderItem={({ item }) => <ActivityListRow activity={item} />}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -60,21 +63,24 @@ function ActivityListRow({ activity }: { activity: ActivityRow }) {
       { text: 'Delete', style: 'destructive', onPress: () => deleteActivity(activity.id) },
     ]);
   return (
-    <Pressable
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-      onPress={() => router.push(`/activity/${activity.id}`)}
-      onLongPress={confirmDelete}>
-      <View style={styles.rowText}>
-        <Text style={styles.rowTitle}>
-          {TYPE_LABEL[activity.type]} · {when}
-        </Text>
-        <Text style={styles.rowMeta}>
-          {formatKm(activity.distanceM)} km · {formatDuration(activity.durationS)} ·{' '}
-          {formatPace(activity.distanceM, activity.durationS)}
-        </Text>
-      </View>
-      <Text style={styles.rowChevron}>›</Text>
-    </Pressable>
+    <Animated.View entering={FadeIn.duration(250)} exiting={FadeOut.duration(180)}>
+      <ScalePressable
+        scaleTo={0.97}
+        style={styles.row}
+        onPress={() => router.push(`/activity/${activity.id}`)}
+        onLongPress={confirmDelete}>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle}>
+            {TYPE_LABEL[activity.type]} · {when}
+          </Text>
+          <Text style={styles.rowMeta}>
+            {formatKm(activity.distanceM)} km · {formatDuration(activity.durationS)} ·{' '}
+            {formatPace(activity.distanceM, activity.durationS)}
+          </Text>
+        </View>
+        <Text style={styles.rowChevron}>›</Text>
+      </ScalePressable>
+    </Animated.View>
   );
 }
 
@@ -94,7 +100,6 @@ const styles = StyleSheet.create({
     borderColor: Trace.border,
     gap: 12,
   },
-  rowPressed: { opacity: 0.7 },
   rowText: { flex: 1, gap: 3 },
   rowTitle: { color: Trace.text, fontFamily: TraceFonts.displayMedium, fontSize: 15 },
   rowMeta: {

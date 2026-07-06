@@ -22,9 +22,6 @@ export default function AppTabs() {
           <TabTrigger name="record" href="/" asChild>
             <TabButton>Record</TabButton>
           </TabTrigger>
-          <TabTrigger name="shapes" href="/shapes" asChild>
-            <TabButton>Shapes</TabButton>
-          </TabTrigger>
           <TabTrigger name="history" href="/history" asChild>
             <TabButton>History</TabButton>
           </TabTrigger>

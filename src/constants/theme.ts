@@ -1,6 +1,5 @@
 /**
- * Trace design tokens — extracted from docs/Strava Shapes - Mockups (standalone).html
- * Electric lime on green-cast near-black. The app commits to the dark world;
+ * Trace design tokens — electric lime on green-cast near-black. The app commits to the dark world;
  * light mode maps to the same palette (design decision, see TECH_SPEC).
  */
 

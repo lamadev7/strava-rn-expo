@@ -1,23 +1,57 @@
+import type { StyleSpecification } from '@maplibre/maplibre-react-native';
 import { create } from 'zustand';
 
 /**
- * Basemap detail preference. "dark" is the Trace aesthetic (minimal, lime pops);
- * "liberty" is the information-dense OSM style (place names, POIs, water) for
- * users who want Google-Maps-like orientation. Both from OpenFreeMap, keyless.
+ * Basemap preference, picked via the segmented switcher:
+ * - "dark"      — the Trace aesthetic (minimal, lime pops). OpenFreeMap, keyless.
+ * - "liberty"   — information-dense OSM style (place names, POIs). OpenFreeMap, keyless.
+ * - "satellite" — Esri World Imagery draped over AWS Terrarium 3D terrain.
+ *   Both free with attribution, keyless. Photorealistic 3D buildings are NOT
+ *   available free anywhere (Google 3D Tiles is paid, Apple is MapKit-only).
  */
-export const MAP_STYLES = {
+
+/** Esri World Imagery + Terrarium DEM as an inline MapLibre style */
+const SATELLITE_STYLE: StyleSpecification = {
+  version: 8,
+  sources: {
+    satellite: {
+      type: 'raster',
+      tiles: [
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      ],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: 'Esri, Maxar, Earthstar Geographics',
+    },
+    terrainSource: {
+      type: 'raster-dem',
+      tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: 'terrarium',
+    },
+  },
+  layers: [
+    { id: 'background', type: 'background', paint: { 'background-color': '#0B0F0B' } },
+    { id: 'satellite', type: 'raster', source: 'satellite' },
+  ],
+  terrain: { source: 'terrainSource', exaggeration: 1.15 },
+};
+
+export type MapStyleKey = 'dark' | 'liberty' | 'satellite';
+
+export const MAP_STYLES: Record<MapStyleKey, string | StyleSpecification> = {
   dark: 'https://tiles.openfreemap.org/styles/dark',
   liberty: 'https://tiles.openfreemap.org/styles/liberty',
-} as const;
-
-export type MapStyleKey = keyof typeof MAP_STYLES;
+  satellite: SATELLITE_STYLE,
+};
 
 type MapStyleState = {
   styleKey: MapStyleKey;
-  toggle: () => void;
+  setStyle: (key: MapStyleKey) => void;
 };
 
 export const useMapStyle = create<MapStyleState>((set) => ({
   styleKey: 'dark',
-  toggle: () => set((s) => ({ styleKey: s.styleKey === 'dark' ? 'liberty' : 'dark' })),
+  setStyle: (styleKey) => set({ styleKey }),
 }));

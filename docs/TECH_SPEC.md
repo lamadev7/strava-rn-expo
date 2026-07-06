@@ -7,7 +7,7 @@
 
 ## 1. Product Summary
 
-iOS-first mobile fitness tracker (run / ride / walk) built on Expo. Differentiator: **shape-route generation** — the app scans the user's local street network and suggests real, runnable loop routes shaped like geometric figures (circle, oval, square, heart, …), ranked by an honest predicted fit score. After running one, the app overlays actual GPS trail on the intended shape with a similarity score.
+iOS-first mobile fitness tracker (run / ride / walk) built on Expo: precise GPS recording, background tracking, activity history and detail charts. A differentiator feature slot is reserved and will be specified later (the former shape-route generation feature was removed 2026-07-06).
 
 Non-goals (v1–v2): social feed, accounts, cloud sync, segments, paid services. Local-first.
 
@@ -17,22 +17,23 @@ Non-goals (v1–v2): social feed, accounts, cloud sync, segments, paid services.
 |---|---|---|
 | Framework | Expo SDK 57, React Native, React, TypeScript | expo ~57.0, RN 0.86, React 19.2, TS ~6.0 |
 | Routing | expo-router | ~57.0 (no longer built on React Navigation since SDK 56) |
-| Maps | react-native-maps | Apple Maps provider on iOS — keyless. Subject to the M1 basemap gate (§2.1) |
+| Maps | @maplibre/maplibre-react-native | OpenFreeMap vector tiles — keyless (M1 basemap gate resolved, §2.1) |
 | Location | expo-location + expo-task-manager | background = dev build only |
 | Database | expo-sqlite + Drizzle ORM | WAL mode; `useLiveQuery` for reactive reads |
 | Preferences | expo-sqlite/kv-store | replaces AsyncStorage |
-| Geometry | @turf/turf, curve-matcher, geojson-path-finder | templates / Fréchet scoring / on-device Dijkstra |
+| Geometry | @turf/turf | polyline simplify, geo utils |
 | Charts | victory-native XL (Skia) | Skia bundled in Expo Go since SDK 46 |
 | State | zustand | ~5 fields only; SQLite is source of truth |
 
-### 2.1 M1 basemap decision gate
+### 2.1 Basemaps (M1 gate resolved; satellite added 2026-07-07)
 
-The visual basemap (Apple Maps) and the routing data (OSM via Overpass/ORS) are independent layers. Routes are computed on OSM and drawn as overlays; if the basemap does not render a footpath the route legitimately uses, the route *looks* like it crosses empty ground — a trust problem, not a correctness problem. Mismatch risk is highest outside Apple's detailed-map regions (US/EU major cities).
+`@maplibre/maplibre-react-native` renders one of three styles, picked via the segmented switcher (top-right on map screens, `components/map-style-switcher.tsx`):
 
-**Gate, evaluated at M1 in the developer's own running area:**
-- Apple basemap renders local footpaths → keep `react-native-maps` for MVP.
-- Basemap is bare where OSM is rich → switch to `@maplibre/maplibre-react-native` + OpenFreeMap tiles at M1 (OSM-rendered tiles = same dataset as routing = visual consistency; dev build already required; $0, keyless).
-- Regardless of outcome: satellite/hybrid toggle on route-preview so users can verify routes against imagery.
+| Key | Source | Notes |
+|---|---|---|
+| `dark` | OpenFreeMap `styles/dark` | default; Trace aesthetic |
+| `liberty` | OpenFreeMap `styles/liberty` | detailed OSM (POIs, names) |
+| `satellite` | Esri World Imagery raster + AWS Terrarium `raster-dem` | inline style JSON in `features/settings/map-style.ts`; MapLibre `terrain` (exaggeration 1.15) = 3D terrain; camera auto-pitches 50° on entry. Keyless/free with attribution. DEM maxzoom 15. No free photorealistic 3D buildings exist (Google 3D Tiles paid, Apple MapKit-only). |
 
 **Workflow**: development build from day 1 (`expo-dev-client`, local `npx expo run:ios`). Never hand-edit `ios/`/`android/` — SDK 57 `expo prebuild` clears and regenerates them; all native config lives in `app.json` config plugins.
 
@@ -46,14 +47,11 @@ src/
     (tabs)/
       index.tsx            # Record screen (map + start/stop)
       history.tsx          # Activity list
-      shapes.tsx           # Shape scan + suggestions
       profile.tsx          # Totals, settings
-    activity/[id].tsx      # Activity detail (charts, overlay)
-    route-preview.tsx      # Generated route preview / actions
+    activity/[id].tsx      # Activity detail (charts)
   features/
     recording/             # state machine, background task, point filter, stats
     activities/            # queries, splits, detail derivations
-    shape-routes/          # templates, scan, optimizer, scoring, ORS client
     map/                   # map components, polyline layers, camera follow
   db/                      # drizzle schema + migrations
   lib/                     # geo utils, formatters, constants
@@ -77,7 +75,6 @@ activities: {
   durationS: integer,         // moving time
   avgPaceSecPerKm: real | null,
   elevGainM: real | null,
-  shapeRouteId: text | null,  // fk → shape_routes.id
 }
 
 track_points: {
@@ -89,24 +86,6 @@ track_points: {
   timestamp: integer (epoch ms),
   speed: real | null,         // m/s from GPS
   accuracy: real | null,      // meters
-}
-
-shape_routes: {
-  id: text (uuid, pk),
-  shape: text,                // template key: 'circle' | 'oval' | 'square' | 'heart' | ...
-  targetDistanceM: integer,
-  startLat: real, startLng: real,
-  geometry: text,             // GeoJSON LineString (JSON string)
-  similarityScore: real,      // 0–1, curve-matcher shapeSimilarity
-  createdAt: integer,
-}
-
-osm_networks: {               // Overpass response cache
-  id: text (pk),              // geohash(center) + radius bucket
-  centerLat: real, centerLng: real,
-  radiusM: integer,
-  geojson: text,              // walkable network as GeoJSON FeatureCollection
-  fetchedAt: integer,         // TTL ~30 days
 }
 ```
 
@@ -128,8 +107,8 @@ TaskManager.defineTask(RECORDING_TASK, handler)   // module top level — REQUIR
 Location.startLocationUpdatesAsync(RECORDING_TASK, {
   accuracy: Accuracy.BestForNavigation,
   activityType: ActivityType.Fitness,
-  distanceInterval: 5,            // meters
-  deferredUpdatesInterval: 5000,  // batch delivery ~5 s
+  timeInterval: 1000,             // Android: ~1 Hz
+  distanceInterval: 0,            // iOS: continuous fixes — batching/deferral makes the live trail lag (fixed 2026-07-06)
   pausesUpdatesAutomatically: false,  // iOS can otherwise silently stop mid-run
   showsBackgroundLocationIndicator: true,
   // Android (later): foregroundService { notificationTitle, notificationBody }
@@ -162,6 +141,9 @@ Result: standing still stores nothing (zero phantom distance); straight-line dis
 
 - `useLiveQuery` on `track_points` for the active activity → polyline + stats.
 - Throttle map polyline updates to ~1/s; `turf.simplify` for render when > 1,000 points.
+- **User puck** (`features/map/heading-puck.tsx`): RN view on a MapLibre `Marker` — accent dot (white border), pulsing glow (Reanimated `withRepeat`), and a pre-baked gradient flashlight cone (`assets/images/heading-beam.png`, regenerate via `scripts/gen-heading-beam.js`) rotated by the magnetometer (`watchHeadingAsync`) so it tracks device FACING while stationary (GPS course only updates when moving). Rotation is screen-space — valid only while camera bearing stays 0 (north-up); subtract map bearing if that ever changes.
+- **Map children invariant**: never conditionally mount/unmount Layers, Sources, or Markers inside the map — MapLibre RN freezes each `id` per component instance and reshuffled siblings throw `` `id` cannot be changed ``. Keep them mounted; hide via opacity.
+- Press feedback app-wide via `components/scale-pressable.tsx` (spring scale); screen-state transitions use Reanimated entering/exiting + `LinearTransition`.
 
 ### 5.6 Permissions (iOS)
 
@@ -170,90 +152,28 @@ Result: standing still stores nothing (zero phantom distance); straight-line dis
 - Config plugin (app.json): `NSLocationWhenInUseUsageDescription`, `NSLocationAlwaysAndWhenInUseUsageDescription`, `UIBackgroundModes: ["location"]`.
 - Denial → banner + Settings deep link; foreground-only mode still functions.
 
-## 6. Shape Route Engine
+## 6. Activity Replay (shipped 2026-07-06)
 
-### 6.1 UX contract (suggestion-first)
+Replay a completed activity as an animated marker gliding along the recorded path. No schema change — replays are derived entirely from `track_points` (lat/lng/timestamp/speed).
 
-User provides **start point + target distance** only. No upfront shape pick, no destination (shapes are closed loops; start = end — A→B open lines cannot form shapes).
+- Engine: `features/playback/use-playback.ts` — playback timeline from real timestamps with idle gaps capped at 5 s (pauses skipped), linear interpolation between points, binary-search segment lookup, RAF clock throttled to ~30 fps.
+- Rates: 4× / 10× / 30× (cycle button).
+- Live readouts during replay: current speed (km/h, from recorded doppler speed with segment-distance fallback), distance covered, real elapsed time.
+- Map: full route dims to 25%, traveled portion draws at full accent, marker is an accent dot with white border. Traveled-line source and marker stay mounted permanently (opacity-toggled) — conditionally mounting map children trips MapLibre's frozen-id invariant.
 
-```
-Scan → ranked "Best for your area" (top 3–5 with predicted %)
-     → "All shapes" grid (full library, every shape shows predicted % +
-        distance hints; nothing hidden; any shape forceable)
-Tap shape → deep fit → route-preview (final % + Shuffle / Save / Run)
-```
+(The former shape-route generation feature was removed 2026-07-06 before implementation started; replay took its slot.)
 
-**Score integrity rule (decision B):** predicted scores come from a *mini deep-fit* — the real optimizer at a small candidate budget — never from standalone heuristics. Same scorer in both passes so predicted ≈ final. Heuristics may only pre-filter hopeless shapes (e.g., area too sparse for stars) and must be labeled "not scanned", never given a fake number.
+## 7. (removed)
 
-### 6.2 Shape templates
-
-A template is a parametric closed curve sampled to N points, normalized to unit scale:
-
-```ts
-type ShapeTemplate = {
-  key: string;                    // 'heart', 'circle', ...
-  label: string;
-  minRecommendedKm?: number;      // e.g. heart ≈ 4+, star ≈ 8+
-  points: (n: number) => Position[];  // n samples along the closed curve
-}
-```
-
-Library is open-ended (circle, oval, square, heart, triangle, diamond, hexagon, star, …). Adding a shape = adding one template. Custom finger-drawn shapes (V3) reuse the same pipeline.
-
-### 6.3 Street network
-
-- Source: Overpass API — walkable ways within radius ≈ `targetDistance/π + margin` of start.
-  Filter: `highway ∈ {footway, path, pedestrian, living_street, residential, service, track, unclassified, tertiary, cycleway}` and `foot != no` and `access != private`.
-- Converted to GeoJSON LineStrings → cached in `osm_networks` (TTL 30 days, keyed by geohash + radius bucket).
-- Graph: `geojson-path-finder` (Dijkstra) built from cached GeoJSON. Few-thousand edges typical; build < 1 s, each route ~ms.
-- Overpass failure → fall back to kumi.systems mirror → else cached areas only + clear "need connection" message.
-
-### 6.4 Fitting algorithm (deep fit)
-
-```
-for candidate in (translation grid ±200–500 m) × (rotations, 12 × 30°) × (scale ±20%):
-  1. place template at candidate transform, perimeter = target distance
-  2. sample 15–40 via-points along template
-  3. snap each via-point to nearest graph node
-  4. route consecutive pairs with Dijkstra (closed: last → first)
-  5. leg detour ratio = routedLegLen / templateLegLen;
-     if > 2 → move via-point once, retry; still bad → penalize
-  6. score = curveMatcher.shapeSimilarity(routed, template)
-             − w · |routedLen − targetLen| / targetLen
-keep best; budget: deep fit ~50–200 candidates, mini fit (scan) ~10–20
-```
-
-Winner → **one** external call for a clean navigable polyline (§6.5) → persist `shape_routes`.
-
-### 6.5 External routing (polish / MVP)
-
-- **openrouteservice** `foot-walking`, free key: ~2,000 req/day, 40/min, **max 50 waypoints**, round_trip ≤ 100 km.
-- MVP (M5): circle/oval via ORS `options.round_trip { length, points, seed }`; returned loop is **re-scored** with curve-matcher (round_trip does not guarantee circularity), retry 2–3 seeds, display real %.
-- Fallback router: FOSSGIS Valhalla (`valhalla.openstreetmap.de`), ~1 req/user/s, must send identifying `X-Client-Id` header.
-- Budget rule: ≤ 1 external routing call per generated route (optimizer is fully on-device).
-- API key ships in the client — acceptable for personal MVP; revisit (proxy) before any public release.
-
-### 6.6 M5 scope cut (decision A)
-
-M5 ships the Shapes tab with **only circle + oval active**; all other tiles greyed "coming soon". No fake scores. Full scan + library activates at M6.
-
-## 7. Follow Mode (M7)
-
-- Planned route rendered dashed; live trail solid.
-- Off-route check per accepted GPS point: `turf.pointToLineDistance(current, planned) > 40 m` → "off shape" banner (debounced, 2 consecutive points).
-- Post-run overlay: intended vs actual + final `shapeSimilarity` on activity detail. Link via `activities.shapeRouteId`.
+Removed with the shape feature — section number kept so cross-references stay stable.
 
 ## 8. External Services ($0 budget)
 
 | Service | Use | Limit / Policy |
 |---|---|---|
-| openrouteservice | MVP routing + polish call | ~2,000/day, 40/min, 50 waypoints |
-| Overpass API | walk network download | fair use; cache hard; kumi mirror fallback |
-| FOSSGIS Valhalla | fallback router | ~1 req/user/s, X-Client-Id required |
-| Nominatim | optional address → start point | 1 req/s, identifying UA, cache results |
-| OpenFreeMap | vector tiles (MapLibre phase, deferred) | unlimited, keyless |
+| OpenFreeMap | vector tiles for MapLibre | unlimited, keyless |
 
-No backend. Escape hatch if optimizer outgrows the phone: FastAPI + osmnx microservice (Render free tier / Oracle Always Free) — see Obsidian research note, Option B.
+No backend.
 
 ## 9. Milestones
 
@@ -264,15 +184,11 @@ No backend. Escape hatch if optimizer outgrows the phone: FastAPI + osmnx micros
 | M2 | Recording + SQLite | drizzle, state machine | walk recorded, survives app kill |
 | M3 | Background tracking | task-manager, UIBackgroundModes | 30-min locked-screen walk = full track |
 | M4 | Detail + charts | victory-native, splits | detail screen ≈ baby Strava |
-| M5 | Shapes MVP | ORS round_trip, re-scoring | runnable 5 km loop suggested (circle/oval only) |
-| M6 | Full shape engine | Overpass, optimizer, scan | recognizable heart ≥ ~80% in normal grid |
-| M7 | Follow mode + overlay | pointToLineDistance | run a shape, see intended-vs-actual |
-
-Allowed resequencing: M5 before M3 if motivation needs an early payoff (shape preview needs no background tracking).
+| M5+ | Next feature (TBD) | — | reserved; former shape milestones (M5–M7) removed 2026-07-06 |
 
 ## 10. Testing Strategy
 
-- **Pure functions unit-tested in plain TS** (platform-free): point filter, haversine distance, pace/elevation derivations, template generation, transform math, scoring wrapper, detour-ratio logic.
+- **Pure functions unit-tested in plain TS** (platform-free): point filter, haversine distance, pace/elevation derivations.
 - **Simulator**: GPX playback for recording-pipeline development.
 - **Field tests are exit criteria** for every milestone (real walks/runs; battery measured at M3).
 - No UI test framework in v1; UI verified by field use.
@@ -284,20 +200,16 @@ Allowed resequencing: M5 before M3 if motivation needs an early payoff (shape pr
 | 2026-07-04 | iOS first; local Xcode dev builds; free Apple ID (7-day re-sign) |
 | 2026-07-04 | react-native-maps + Apple Maps (keyless); MapLibre deferred to Android phase |
 | 2026-07-04 | Drizzle over Prisma (Prisma has no production RN runtime); zustand over Redux (≈5 fields of state) |
-| 2026-07-04 | Tracker-first order (M1–M4 → M5–M6); M5-before-M3 swap allowed |
-| 2026-07-04 | Suggestion-first shape UX; shapes are loops; no from→to destination |
-| 2026-07-04 | (A) M5 = circle/oval only, rest greyed; no fake scores |
-| 2026-07-04 | (B) predicted score = mini deep-fit with real optimizer, never standalone heuristics |
+| 2026-07-04 | Tracker-first order (M1–M4 first) |
 | 2026-07-04 | While-Using permission is the happy path; Always optional |
 | 2026-07-04 | `pausesUpdatesAutomatically: false` during active recording |
-| 2026-07-04 | M1 basemap gate (§2.1): field-check Apple Maps footpath rendering in own area; switch to MapLibre + OpenFreeMap if bare. Satellite toggle on route-preview either way |
+| 2026-07-04 | M1 basemap gate (§2.1): resolved — MapLibre + OpenFreeMap |
+| 2026-07-06 | Continuous ~1 Hz location delivery while recording (no deferred batching); camera follows via easeTo preserving user zoom |
+| 2026-07-06 | Shape-route feature removed entirely (code, tabs, schema plans, docs) before implementation; Activity Replay took the slot (§6) |
+| 2026-07-06 | User puck = RN Marker view (not map layers): compass beam via watchHeadingAsync, pulsing glow via Reanimated; map layers proved untintable/uncrashable-only-with-care (frozen-id invariant, §5.5) |
+| 2026-07-07 | Satellite 3D basemap: Esri imagery + Terrarium DEM, free/keyless; segmented style switcher top-right replaces cycle button |
 
 ## 12. References
 
 - Planning notes: Obsidian `Tech/wiki/Projects/Strava 2.0/` (Overview, Milestones, Architecture, Risks, User Flows, 2 research notes)
 - Expo SDK 57 docs: https://docs.expo.dev/versions/v57.0.0/
-- GPS-art paper: https://link.springer.com/article/10.1007/s41095-019-0146-z
-- stravart (prior art): https://github.com/dsleo/stravart
-- curve-matcher: https://github.com/chanind/curve-matcher
-- geojson-path-finder: https://github.com/perliedman/geojson-path-finder
-- ORS restrictions: https://openrouteservice.org/restrictions/
