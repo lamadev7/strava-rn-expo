@@ -103,12 +103,28 @@ export function usePlayback(points: TrackPoint[]) {
     };
   }, [points, timeline, cumDist, realElapsed, t]);
 
+  // distance → playback-progress fraction (moment dots on the scrubber)
+  const progressAtDistance = (distanceM: number): number => {
+    if (durationS <= 0 || cumDist.length < 2) return 0;
+    let lo = 0;
+    let hi = cumDist.length - 2;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (cumDist[mid] <= distanceM) lo = mid;
+      else hi = mid - 1;
+    }
+    const span = cumDist[lo + 1] - cumDist[lo];
+    const f = span > 0 ? Math.min(Math.max((distanceM - cumDist[lo]) / span, 0), 1) : 0;
+    return (timeline[lo] + (timeline[lo + 1] - timeline[lo]) * f) / durationS;
+  };
+
   return {
     available: points.length > 1,
     playing,
     rate,
     frame,
     progress: durationS > 0 ? t / durationS : 0,
+    progressAtDistance,
     atEnd: t >= durationS && durationS > 0,
     toggle: () => {
       if (!playing && t >= durationS) setT(0); // replay from start when finished

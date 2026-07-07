@@ -1,6 +1,7 @@
 /**
- * Trace design tokens — electric lime on green-cast near-black. The app commits to the dark world;
- * light mode maps to the same palette (design decision, see TECH_SPEC).
+ * Trace design tokens — Strava-style signal orange on warm white (design "Trace Moments").
+ * The app commits to the light athletic look; the cinematic replay and the moment camera
+ * are the only dark surfaces. Light and dark OS modes map to the same palette.
  */
 
 import '@/global.css';
@@ -8,20 +9,20 @@ import '@/global.css';
 import { Platform } from 'react-native';
 
 const trace = {
-  text: '#F2F6EA',
-  background: '#0E120C',
-  backgroundElement: '#171C15',
-  backgroundSelected: '#242B22',
-  textSecondary: '#8D9A8C',
-  textMuted: '#6C7566',
-  accent: '#CDFF3C',
-  onAccent: '#141900',
-  border: '#2F382C',
+  text: '#1B1B20',
+  background: '#F7F6F3',
+  backgroundElement: '#FFFFFF',
+  backgroundSelected: 'rgba(252,82,0,0.1)',
+  textSecondary: '#66666F',
+  textMuted: '#8A8A93',
+  accent: '#FC5200',
+  onAccent: '#FFFFFF',
+  border: 'rgba(0,0,0,0.08)',
   /** semantic tiers — never used as brand accent */
-  tierGreat: '#5CE3A1',
-  tierOk: '#FFC24B',
+  tierGreat: '#1E9E5A',
+  tierOk: '#E8A13C',
   tierTricky: '#98A29B',
-  danger: '#FF6A5C',
+  danger: '#E5484D',
 } as const;
 
 export const Colors = {

@@ -9,11 +9,7 @@ export type TrackPoint = {
   accuracy: number | null;
 };
 
-export type ActivityType = 'run' | 'ride' | 'walk';
-
-/** TECH_SPEC §5.3 — garbage GPS filter thresholds */
-const MAX_ACCURACY_M = 30;
-const MAX_SPEED_MS: Record<ActivityType, number> = { run: 12, walk: 12, ride: 25 };
+export type ActivityType = 'run' | 'ride' | 'hike';
 
 export function toTrackPoint(location: LocationObject): TrackPoint {
   return {
@@ -24,20 +20,6 @@ export function toTrackPoint(location: LocationObject): TrackPoint {
     speed: location.coords.speed,
     accuracy: location.coords.accuracy,
   };
-}
-
-/** TECH_SPEC §5.3 — reject noisy or physically impossible points */
-export function acceptPoint(
-  point: TrackPoint,
-  previous: TrackPoint | undefined,
-  activityType: ActivityType,
-): boolean {
-  if (point.accuracy !== null && point.accuracy > MAX_ACCURACY_M) return false;
-  if (!previous) return true;
-  if (point.timestamp <= previous.timestamp) return false;
-  const dt = (point.timestamp - previous.timestamp) / 1000;
-  const impliedSpeed = haversineM(previous, point) / dt;
-  return impliedSpeed <= MAX_SPEED_MS[activityType];
 }
 
 export function haversineM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -71,21 +53,54 @@ export function totalDistanceM(points: TrackPoint[]): number {
   return total;
 }
 
-/** Σ positive altitude deltas over a smoothed series (TECH_SPEC §5.4) */
-export function elevationGainM(points: TrackPoint[]): number {
+export type ElevationStats = {
+  gainM: number;
+  lossM: number;
+  minAltM: number | null;
+  maxAltM: number | null;
+};
+
+/**
+ * Elevation gain/loss with smoothing + hysteresis (TECH_SPEC §5.4, hardened
+ * for hikes). GPS altitude wanders ±5–15 m; summing every positive smoothed
+ * delta inflates gain badly on long flat stretches. Two defenses:
+ *
+ *  1. 5-sample trailing mean flattens per-fix jitter.
+ *  2. Deadband accumulation: altitude must move ≥ thresholdM away from the
+ *     last banked anchor before the move counts — oscillation inside the
+ *     band contributes nothing, real climbs bank chunk by chunk. Worst-case
+ *     truncation error is < thresholdM per sustained climb/descent.
+ */
+export function elevationStats(points: TrackPoint[], thresholdM = 3): ElevationStats {
   const alts = points.map((p) => p.altitude).filter((a): a is number => a !== null);
-  if (alts.length < 2) return 0;
+  if (alts.length < 2) {
+    const only = alts.length === 1 ? alts[0] : null;
+    return { gainM: 0, lossM: 0, minAltM: only, maxAltM: only };
+  }
   const window = 5;
   const smoothed = alts.map((_, i) => {
     const slice = alts.slice(Math.max(0, i - window + 1), i + 1);
     return slice.reduce((s, v) => s + v, 0) / slice.length;
   });
   let gain = 0;
+  let loss = 0;
+  let anchor = smoothed[0];
+  let min = smoothed[0];
+  let max = smoothed[0];
   for (let i = 1; i < smoothed.length; i++) {
-    const d = smoothed[i] - smoothed[i - 1];
-    if (d > 0) gain += d;
+    const v = smoothed[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+    const d = v - anchor;
+    if (d >= thresholdM) {
+      gain += d;
+      anchor = v;
+    } else if (d <= -thresholdM) {
+      loss += -d;
+      anchor = v;
+    }
   }
-  return gain;
+  return { gainM: gain, lossM: loss, minAltM: min, maxAltM: max };
 }
 
 export function formatDuration(totalSeconds: number): string {
@@ -110,4 +125,14 @@ export function formatPace(distanceM: number, durationS: number): string {
 
 export function formatKm(distanceM: number): string {
   return (distanceM / 1000).toFixed(2);
+}
+
+/** rough energy estimate — flat MET-style factor per km, plus a climb bonus */
+const KCAL_PER_KM: Record<ActivityType, number> = { run: 62, ride: 25, hike: 50 };
+/** extra kcal per meter climbed (~70 kg body): lifting work dominates on foot */
+const KCAL_PER_CLIMB_M: Record<ActivityType, number> = { run: 0.45, ride: 0.25, hike: 0.45 };
+
+export function estimateKcal(distanceM: number, type: ActivityType, elevGainM = 0): number {
+  const climb = Math.max(0, elevGainM) * KCAL_PER_CLIMB_M[type];
+  return Math.round((distanceM / 1000) * KCAL_PER_KM[type] + climb);
 }

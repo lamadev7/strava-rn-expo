@@ -1,27 +1,33 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, Marker, type CameraRef } from '@maplibre/maplibre-react-native';
 import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeInDown, FadeOut } from 'react-native-reanimated';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MapStyleSwitcher } from '@/components/map-style-switcher';
 import { ScalePressable } from '@/components/scale-pressable';
 import { Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
-import { activities, trackPoints } from '@/db/schema';
+import { activities, moments, trackPoints, type MomentRow } from '@/db/schema';
+import { MomentMarker, type MomentPhase } from '@/features/moments/moment-marker';
+import { momentPhotoUri } from '@/features/moments/photos';
 import { usePlayback } from '@/features/playback/use-playback';
 import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
-import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
+import { MAP_STYLES, useMapStyle, type MapStyleKey } from '@/features/settings/map-style';
 
-const TYPE_LABEL = { run: 'Run', ride: 'Ride', walk: 'Walk' } as const;
+const TYPE_LABEL = { run: 'Run', ride: 'Ride', hike: 'Hike' } as const;
+
+/** design §3d — the cinematic replay always runs on the dark basemap */
+const REPLAY_BG = '#16171B';
 
 export default function ActivityDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, replay } = useLocalSearchParams<{ id: string; replay?: string }>();
   const router = useRouter();
   const { data: activityRows } = useLiveQuery(
     db.select().from(activities).where(eq(activities.id, id ?? '')),
@@ -31,13 +37,34 @@ export default function ActivityDetailScreen() {
     db.select().from(trackPoints).where(eq(trackPoints.activityId, id ?? '')).orderBy(trackPoints.seq),
     [id],
   );
+  const { data: momentRows } = useLiveQuery(
+    db.select().from(moments).where(eq(moments.activityId, id ?? '')).orderBy(moments.distanceM),
+    [id],
+  );
   const activity = activityRows?.[0];
   const deleteActivity = useRecordingStore((s) => s.deleteActivity);
   const styleKey = useMapStyle((s) => s.styleKey);
   const cameraRef = useRef<CameraRef>(null);
 
   const [replayMode, setReplayMode] = useState(false);
+  /** replay-local basemap — defaults to the cinematic dark map every entry,
+      switchable without touching the user's global preference */
+  const [replayStyle, setReplayStyle] = useState<MapStyleKey>('dark');
+  /** moment manually opened by tapping its pin/chip (design §3f step 4) */
+  const [openMoment, setOpenMoment] = useState<string | null>(null);
   const playback = usePlayback(pointRows ?? []);
+
+  // deep link straight into the cinematic replay: myapp://activity/<id>?replay=1
+  const wantReplay = replay === '1' && (pointRows?.length ?? 0) > 1 && !replayMode;
+  useEffect(() => {
+    if (!wantReplay) return;
+    const t = setTimeout(() => {
+      setReplayMode(true);
+      playback.toggle();
+    }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantReplay]);
 
   const confirmDelete = () =>
     Alert.alert('Delete activity?', 'Gone for good.', [
@@ -65,6 +92,9 @@ export default function ActivityDetailScreen() {
   const lngs = coords.map((c) => c[0]);
   const lats = coords.map((c) => c[1]);
   const hasTrack = coords.length > 1;
+  const bounds: [number, number, number, number] | null = hasTrack
+    ? [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)]
+    : null;
 
   const route: GeoJSON.Feature<GeoJSON.LineString> | null = hasTrack
     ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }
@@ -83,6 +113,31 @@ export default function ActivityDetailScreen() {
       }
     : null;
 
+  const momentList = momentRows ?? [];
+  // popup choreography (design §3f): pop when the replay marker passes the
+  // pin, dwell for ~20% of the run's distance, then settle into a tappable chip
+  const dwellM = Math.max(200, activity.distanceM * 0.2);
+  const phaseFor = (m: MomentRow): MomentPhase => {
+    if (openMoment === m.id) return 'open';
+    if (!replaying) return 'hidden';
+    const gone = playback.frame!.distanceM - m.distanceM;
+    if (gone < 0) return 'hidden';
+    return gone < dwellM ? 'open' : 'chip';
+  };
+  const toggleMoment = (momentId: string) =>
+    setOpenMoment((cur) => (cur === momentId ? null : momentId));
+
+  const startReplay = () => {
+    setReplayMode(true);
+    setReplayStyle('dark');
+    if (!playback.playing) playback.toggle();
+  };
+  const exitReplay = () => {
+    playback.reset();
+    setReplayMode(false);
+    setOpenMoment(null);
+  };
+
   const when = new Date(activity.startedAt).toLocaleString(undefined, {
     weekday: 'long',
     hour: 'numeric',
@@ -92,44 +147,194 @@ export default function ActivityDetailScreen() {
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={styles.mapWrap}>
-        {hasTrack ? (
-          <MapLibreMap mapStyle={MAP_STYLES[styleKey]} style={StyleSheet.absoluteFill}>
+
+      {/* ══════════ design §3e — light activity detail ══════════ */}
+      <SafeAreaView style={styles.page} edges={['top', 'bottom']}>
+        <View style={styles.header}>
+          <ScalePressable style={styles.headerButton} onPress={() => router.back()} hitSlop={8}>
+            <SymbolView
+              name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
+              size={13}
+              tintColor={Trace.text}
+            />
+          </ScalePressable>
+          <Text style={styles.headerTitle}>Activity</Text>
+          <ScalePressable style={styles.headerButton} onPress={confirmDelete} hitSlop={8}>
+            <SymbolView
+              name={{ ios: 'ellipsis', android: 'more_horiz', web: 'more_horiz' }}
+              size={14}
+              tintColor={Trace.text}
+            />
+          </ScalePressable>
+        </View>
+
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.title}>{TYPE_LABEL[activity.type]}</Text>
+            <Text style={styles.subtitle}>
+              {when} · {points.length} GPS points
+              {activity.type === 'hike' && activity.elevLossM != null
+                ? ` · ↓${Math.round(activity.elevLossM)} m descent`
+                : ''}
+            </Text>
+          </View>
+
+          <View style={styles.mapCard}>
+            {hasTrack ? (
+              <MapLibreMap mapStyle={MAP_STYLES[styleKey]} style={StyleSheet.absoluteFill}>
+                <Camera
+                  initialViewState={{
+                    bounds: bounds!,
+                    padding: { top: 40, bottom: 40, left: 40, right: 40 },
+                    // tilt into the 3D terrain when the satellite basemap is up
+                    pitch: styleKey === 'satellite' ? 50 : 0,
+                  }}
+                />
+                {route && (
+                  <GeoJSONSource id="route" data={route}>
+                    <Layer
+                      id="route-line"
+                      type="line"
+                      paint={{ 'line-color': Trace.accent, 'line-width': 4.5 }}
+                      layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+                    />
+                  </GeoJSONSource>
+                )}
+                {momentList.map((m) => (
+                  <Marker key={`pin-${m.id}`} id={`moment-pin-${m.id}`} lngLat={[m.lng, m.lat]}>
+                    <ScalePressable
+                      style={styles.momentPin}
+                      onPress={() => toggleMoment(m.id)}
+                      hitSlop={6}
+                      scaleTo={0.85}>
+                      <SymbolView
+                        name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }}
+                        size={11}
+                        tintColor={Trace.accent}
+                      />
+                    </ScalePressable>
+                  </Marker>
+                ))}
+                {momentList.map((m) => (
+                  <Marker
+                    key={`card-${m.id}`}
+                    id={`moment-card-${m.id}`}
+                    lngLat={[m.lng, m.lat]}
+                    anchor="bottom"
+                    pointerEvents="box-none">
+                    <MomentMarker
+                      uri={momentPhotoUri(m.photo)}
+                      caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
+                      phase={openMoment === m.id ? 'open' : 'hidden'}
+                      onPress={() => toggleMoment(m.id)}
+                    />
+                  </Marker>
+                ))}
+              </MapLibreMap>
+            ) : (
+              <View style={styles.noTrack}>
+                <Text style={styles.noTrackText}>Not enough GPS points for a map.</Text>
+              </View>
+            )}
+            {hasTrack && (
+              <ScalePressable style={styles.watchReplay} onPress={startReplay} scaleTo={0.92}>
+                <SymbolView
+                  name={{ ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }}
+                  size={11}
+                  tintColor="#FFFFFF"
+                />
+                <Text style={styles.watchReplayText}>Watch replay</Text>
+              </ScalePressable>
+            )}
+          </View>
+
+          <View style={styles.statsCard}>
+            <Stat value={formatKm(activity.distanceM)} label="KM" />
+            <View style={styles.divider} />
+            <Stat value={formatDuration(activity.durationS)} label="TIME" />
+            <View style={styles.divider} />
+            {/* hikes lead with climb; run/ride lead with pace */}
+            {activity.type === 'hike' ? (
+              <Stat value={`↑${Math.round(activity.elevGainM ?? 0)}`} label="ELEV M" />
+            ) : (
+              <Stat value={formatPace(activity.distanceM, activity.durationS)} label="PACE /KM" />
+            )}
+            {activity.steps != null && (
+              <>
+                <View style={styles.divider} />
+                <Stat value={activity.steps.toLocaleString()} label="STEPS" />
+              </>
+            )}
+          </View>
+
+          {momentList.length > 0 && (
+            <View style={styles.momentsSection}>
+              <View style={styles.momentsHeader}>
+                <Text style={styles.momentsTitle}>Moments</Text>
+                <Text style={styles.momentsCount}>
+                  {momentList.length} pinned to the route
+                </Text>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filmstrip}>
+                {momentList.map((m) => (
+                  <ScalePressable
+                    key={m.id}
+                    style={styles.filmstripItem}
+                    scaleTo={0.93}
+                    onPress={startReplay}>
+                    <Image
+                      source={{ uri: momentPhotoUri(m.photo) }}
+                      style={styles.filmstripPhoto}
+                      contentFit="cover"
+                      transition={120}
+                    />
+                    <Text style={styles.filmstripCaption}>{formatKm(m.distanceM)} KM</Text>
+                  </ScalePressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+
+      {/* ══════════ design §3d — cinematic replay on the dark map ══════════ */}
+      {replayMode && hasTrack && (
+        <Animated.View
+          style={styles.replayOverlay}
+          entering={FadeIn.duration(260)}
+          exiting={FadeOut.duration(200)}>
+          <MapLibreMap
+            mapStyle={MAP_STYLES[replayStyle]}
+            style={StyleSheet.absoluteFill}
+            logo={false}>
             <Camera
               ref={cameraRef}
               initialViewState={{
-                bounds: [
-                  Math.min(...lngs),
-                  Math.min(...lats),
-                  Math.max(...lngs),
-                  Math.max(...lats),
-                ],
-                padding: { top: 60, bottom: 60, left: 40, right: 40 },
+                bounds: bounds!,
+                padding: { top: 80, bottom: 160, left: 40, right: 40 },
               }}
             />
             {route && (
-              <GeoJSONSource id="route" data={route}>
+              <GeoJSONSource id="replay-route" data={route}>
                 <Layer
-                  id="route-line"
+                  id="replay-route-line"
                   type="line"
-                  paint={{
-                    'line-color': Trace.accent,
-                    'line-width': 4,
-                    // dim the full route while replaying so progress reads clearly
-                    'line-opacity': replaying ? 0.25 : 1,
-                  }}
+                  paint={{ 'line-color': '#3A3D46', 'line-width': 4 }}
                   layout={{ 'line-cap': 'round', 'line-join': 'round' }}
                 />
               </GeoJSONSource>
             )}
             {route && (
-              <GeoJSONSource id="route-traveled" data={traveled ?? route}>
+              <GeoJSONSource id="replay-traveled" data={traveled ?? route}>
                 <Layer
-                  id="route-traveled-line"
+                  id="replay-traveled-line"
                   type="line"
                   paint={{
                     'line-color': Trace.accent,
-                    'line-width': 4,
+                    'line-width': 5,
                     'line-opacity': replaying ? 1 : 0,
                   }}
                   layout={{ 'line-cap': 'round', 'line-join': 'round' }}
@@ -142,101 +347,123 @@ export default function ActivityDetailScreen() {
               id="replay-puck"
               lngLat={playback.frame?.lngLat ?? coords[0]}
               pointerEvents="none">
-              <View style={[styles.replayDot, { opacity: replaying ? 1 : 0 }]} />
+              <View style={[styles.replayDotWrap, { opacity: replaying ? 1 : 0 }]}>
+                <View style={styles.replayDot} />
+              </View>
             </Marker>
+            {momentList.map((m) => (
+              <Marker key={`rpin-${m.id}`} id={`replay-pin-${m.id}`} lngLat={[m.lng, m.lat]} pointerEvents="none">
+                <View
+                  style={[
+                    styles.replayPinDot,
+                    replaying &&
+                      playback.frame!.distanceM >= m.distanceM &&
+                      styles.replayPinDotPassed,
+                  ]}
+                />
+              </Marker>
+            ))}
+            {momentList.map((m) => (
+              <Marker
+                key={`rcard-${m.id}`}
+                id={`replay-card-${m.id}`}
+                lngLat={[m.lng, m.lat]}
+                anchor="bottom"
+                pointerEvents="box-none">
+                <MomentMarker
+                  uri={momentPhotoUri(m.photo)}
+                  caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
+                  phase={phaseFor(m)}
+                  onPress={() => toggleMoment(m.id)}
+                />
+              </Marker>
+            ))}
           </MapLibreMap>
-        ) : (
-          <View style={styles.noTrack}>
-            <Text style={styles.noTrackText}>Not enough GPS points for a map.</Text>
-          </View>
-        )}
-        <SafeAreaView style={styles.mapOverlay} pointerEvents="box-none">
-          <MapStyleSwitcher
-            onChanged={(key) =>
-              cameraRef.current?.setStop({ pitch: key === 'satellite' ? 50 : 0, duration: 600 })
-            }
-          />
-        </SafeAreaView>
-      </View>
 
-      <SafeAreaView edges={['bottom']} style={styles.sheet}>
-        <Text style={styles.title}>
-          {TYPE_LABEL[activity.type]} · {when}
-        </Text>
-        <View style={styles.statsRow}>
-          <Stat value={formatKm(activity.distanceM)} label="KM" />
-          <View style={styles.divider} />
-          <Stat value={formatDuration(activity.durationS)} label="TIME" />
-          <View style={styles.divider} />
-          <Stat value={formatPace(activity.distanceM, activity.durationS)} label="PACE /KM" />
-          <View style={styles.divider} />
-          <Stat value={String(Math.round(activity.elevGainM ?? 0))} label="ELEV M" />
-        </View>
-        {replayMode && playback.frame && (
-          <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(120)} style={styles.playbackPanel}>
-            <View style={styles.playbackStatsRow}>
-              <Stat value={(playback.frame.speedMs * 3.6).toFixed(1)} label="KM/H NOW" />
-              <View style={styles.divider} />
-              <Stat value={formatKm(playback.frame.distanceM)} label="KM GONE" />
-              <View style={styles.divider} />
-              <Stat value={formatDuration(playback.frame.elapsedS)} label="TIME" />
-            </View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${playback.progress * 100}%` }]} />
-            </View>
-            <View style={styles.playbackControls}>
-              <ScalePressable style={styles.playButton} onPress={playback.toggle} scaleTo={0.9}>
-                <SymbolView
-                  name={
-                    playback.playing
-                      ? { ios: 'pause.fill', android: 'pause', web: 'pause' }
-                      : { ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }
+          <SafeAreaView style={styles.replayChrome} pointerEvents="box-none">
+            <View pointerEvents="box-none">
+              <View style={styles.replayTopRow} pointerEvents="box-none">
+                <ScalePressable style={styles.replayGlassButton} onPress={exitReplay} hitSlop={8}>
+                  <SymbolView
+                    name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
+                    size={14}
+                    tintColor="#FFFFFF"
+                  />
+                </ScalePressable>
+                <View style={styles.replayTitleChip}>
+                  <Text style={styles.replayTitle}>{TYPE_LABEL[activity.type]}</Text>
+                  <Text style={styles.replayTitleTag}>REPLAY</Text>
+                </View>
+                <ScalePressable
+                  style={styles.replayGlassButton}
+                  onPress={playback.cycleRate}
+                  hitSlop={8}>
+                  <SymbolView
+                    name={{ ios: 'gauge.with.needle', android: 'speed', web: 'speed' }}
+                    size={15}
+                    tintColor="#FFFFFF"
+                  />
+                </ScalePressable>
+              </View>
+              <View style={styles.replaySwitcherRow} pointerEvents="box-none">
+                <MapStyleSwitcher
+                  value={replayStyle}
+                  onSelect={setReplayStyle}
+                  onChanged={(key) =>
+                    cameraRef.current?.setStop({ pitch: key === 'satellite' ? 50 : 0, duration: 600 })
                   }
-                  size={18}
-                  tintColor={Trace.onAccent}
                 />
-              </ScalePressable>
-              <ScalePressable style={styles.rateButton} onPress={playback.cycleRate} scaleTo={0.92}>
-                <Text style={styles.rateText}>{playback.rate}×</Text>
-              </ScalePressable>
-              <ScalePressable
-                style={styles.exitButton}
-                onPress={() => {
-                  playback.reset();
-                  setReplayMode(false);
-                }}
-                scaleTo={0.92}>
-                <Text style={styles.exitText}>Exit replay</Text>
-              </ScalePressable>
+              </View>
             </View>
-          </Animated.View>
-        )}
 
-        <View style={styles.sheetFooter}>
-          <Text style={styles.meta}>{points.length} GPS points recorded</Text>
-          <View style={styles.footerButtons}>
-            {hasTrack && !replayMode && (
-              <ScalePressable
-                style={styles.replayButton}
-                onPress={() => {
-                  setReplayMode(true);
-                  playback.toggle();
-                }}
-                scaleTo={0.92}>
-                <SymbolView
-                  name={{ ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }}
-                  size={12}
-                  tintColor={Trace.onAccent}
-                />
-                <Text style={styles.replayText}>Replay</Text>
-              </ScalePressable>
-            )}
-            <ScalePressable style={styles.deleteButton} onPress={confirmDelete} scaleTo={0.92}>
-              <Text style={styles.deleteText}>Delete</Text>
-            </ScalePressable>
-          </View>
-        </View>
-      </SafeAreaView>
+            <View style={styles.replayPanel}>
+              <View style={styles.replayControlsRow}>
+                <ScalePressable style={styles.playButton} onPress={playback.toggle} scaleTo={0.9}>
+                  <SymbolView
+                    name={
+                      playback.playing
+                        ? { ios: 'pause.fill', android: 'pause', web: 'pause' }
+                        : { ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }
+                    }
+                    size={16}
+                    tintColor="#FFFFFF"
+                  />
+                </ScalePressable>
+                <View style={styles.progressColumn}>
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[styles.progressFill, { width: `${playback.progress * 100}%` }]}
+                    />
+                    {momentList.map((m) => (
+                      <View
+                        key={m.id}
+                        style={[
+                          styles.progressDot,
+                          { left: `${playback.progressAtDistance(m.distanceM) * 100}%` },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.progressLabels}>
+                    <Text style={styles.progressTime}>
+                      {formatDuration(playback.frame?.elapsedS ?? 0)}
+                    </Text>
+                    <Text style={styles.progressMoments}>
+                      {momentList.length > 0
+                        ? `${momentList.length} moment${momentList.length === 1 ? '' : 's'}`
+                        : ''}
+                    </Text>
+                    <Text style={styles.progressTime}>{formatDuration(activity.durationS)}</Text>
+                  </View>
+                </View>
+                <ScalePressable style={styles.rateChip} onPress={playback.cycleRate} scaleTo={0.92}>
+                  <Text style={styles.rateText}>{playback.rate}×</Text>
+                </ScalePressable>
+              </View>
+            </View>
+          </SafeAreaView>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -244,7 +471,9 @@ export default function ActivityDetailScreen() {
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <View style={styles.stat}>
-      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+        {value}
+      </Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -252,102 +481,244 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Trace.background },
-  mapWrap: { flex: 1 },
-  mapOverlay: { flex: 1, alignItems: 'flex-end', padding: 12 },
+  page: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  headerButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: Trace.border,
+  },
+  headerTitle: { color: Trace.text, fontFamily: TraceFonts.display, fontSize: 14 },
+  content: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 24, gap: 12 },
+  titleBlock: { paddingHorizontal: 6, gap: 2 },
+  title: {
+    color: Trace.text,
+    fontFamily: TraceFonts.display,
+    fontSize: 24,
+    letterSpacing: -0.2,
+  },
+  subtitle: { color: Trace.textMuted, fontFamily: TraceFonts.body, fontSize: 12.5 },
+  mapCard: {
+    height: 280,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#ECE9E1',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
   noTrack: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   noTrackText: { color: Trace.textSecondary, fontFamily: TraceFonts.body, fontSize: 14 },
-  sheet: {
-    backgroundColor: Trace.backgroundElement,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    gap: 16,
+  watchReplay: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingVertical: 8,
+    paddingHorizontal: 13,
+    borderRadius: 999,
+    backgroundColor: '#1B1B20',
+    boxShadow: '0 6px 16px rgba(27,27,32,0.3)',
   },
-  title: { color: Trace.text, fontFamily: TraceFonts.display, fontSize: 18 },
-  statsRow: { flexDirection: 'row', alignItems: 'center' },
-  stat: { flex: 1, alignItems: 'center', gap: 2 },
+  watchReplayText: { color: '#FFFFFF', fontFamily: TraceFonts.display, fontSize: 12 },
+  statsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+  },
+  stat: { flex: 1, gap: 2 },
   statValue: {
     color: Trace.text,
     fontFamily: TraceFonts.mono,
-    fontSize: 20,
+    fontSize: 22,
     fontVariant: ['tabular-nums'],
   },
   statLabel: {
     color: Trace.textMuted,
     fontFamily: TraceFonts.displayMedium,
-    fontSize: 10,
+    fontSize: 10.5,
     letterSpacing: 1.2,
   },
-  divider: { width: 1, height: 28, backgroundColor: Trace.border },
-  meta: { color: Trace.textMuted, fontFamily: TraceFonts.body, fontSize: 12.5 },
-  sheetFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  deleteButton: {
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Trace.danger,
-  },
-  deleteText: { color: Trace.danger, fontFamily: TraceFonts.displayMedium, fontSize: 13 },
-  replayDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: Trace.accent,
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-  },
-  footerButtons: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  replayButton: {
+  divider: { width: 1, alignSelf: 'stretch', backgroundColor: 'rgba(0,0,0,0.07)', marginHorizontal: 16 },
+  momentsSection: { gap: 9 },
+  momentsHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: Trace.accent,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    paddingHorizontal: 6,
   },
-  replayText: { color: Trace.onAccent, fontFamily: TraceFonts.displayMedium, fontSize: 13 },
-  playbackPanel: { gap: 14 },
-  playbackStatsRow: { flexDirection: 'row', alignItems: 'center' },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: Trace.border,
-    overflow: 'hidden',
-  },
-  progressFill: { height: 4, borderRadius: 2, backgroundColor: Trace.accent },
-  playbackControls: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  playButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Trace.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rateButton: {
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  momentsTitle: { color: Trace.text, fontFamily: TraceFonts.display, fontSize: 14 },
+  momentsCount: { color: Trace.textMuted, fontFamily: TraceFonts.body, fontSize: 12 },
+  filmstrip: { gap: 10 },
+  filmstripItem: { alignItems: 'center', gap: 5 },
+  filmstripPhoto: {
+    width: 86,
+    height: 86,
+    borderRadius: 14,
+    backgroundColor: '#ECE9E1',
     borderWidth: 1,
-    borderColor: Trace.border,
-    backgroundColor: Trace.background,
+    borderColor: 'rgba(0,0,0,0.06)',
   },
-  rateText: {
-    color: Trace.text,
+  filmstripCaption: {
+    color: Trace.textMuted,
     fontFamily: TraceFonts.mono,
-    fontSize: 14,
+    fontSize: 9.5,
     fontVariant: ['tabular-nums'],
   },
-  exitButton: {
-    marginLeft: 'auto',
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: Trace.border,
+  momentPin: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    boxShadow: '0 2px 8px rgba(27,27,32,0.25)',
   },
-  exitText: { color: Trace.textSecondary, fontFamily: TraceFonts.displayMedium, fontSize: 13 },
   missing: { color: Trace.textSecondary, fontFamily: TraceFonts.body, fontSize: 14, padding: 24 },
+
+  // ── replay overlay (design §3d) ──
+  replayOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: REPLAY_BG,
+  },
+  replayChrome: { flex: 1, justifyContent: 'space-between' },
+  replayTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  replayGlassButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(22,23,27,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  replayTitleChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: 'rgba(22,23,27,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  replaySwitcherRow: { alignItems: 'flex-end', paddingHorizontal: 16, paddingTop: 10 },
+  replayTitle: { color: '#FFFFFF', fontFamily: TraceFonts.display, fontSize: 12.5 },
+  replayTitleTag: { color: 'rgba(255,255,255,0.5)', fontFamily: TraceFonts.body, fontSize: 11 },
+  replayDotWrap: { alignItems: 'center', justifyContent: 'center' },
+  replayDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Trace.accent,
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    boxShadow: '0 0 14px rgba(252,82,0,0.8)',
+  },
+  replayPinDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#3A3D46',
+    borderWidth: 2,
+    borderColor: REPLAY_BG,
+  },
+  replayPinDotPassed: { backgroundColor: Trace.accent },
+  replayPanel: {
+    marginHorizontal: 12,
+    marginBottom: 10,
+    borderRadius: 22,
+    backgroundColor: 'rgba(22,23,27,0.82)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    boxShadow: '0 12px 34px rgba(0,0,0,0.5)',
+    paddingTop: 14,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+  },
+  replayControlsRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  playButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Trace.accent,
+    boxShadow: '0 0 0 4px rgba(252,82,0,0.18)',
+  },
+  progressColumn: { flex: 1, gap: 7 },
+  progressTrack: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
+  progressFill: { height: 5, borderRadius: 3, backgroundColor: Trace.accent },
+  progressDot: {
+    position: 'absolute',
+    top: '50%',
+    width: 7,
+    height: 7,
+    marginTop: -3.5,
+    marginLeft: -3.5,
+    borderRadius: 3.5,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 2,
+    borderColor: 'rgba(252,82,0,0.6)',
+  },
+  progressLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressTime: {
+    color: 'rgba(255,255,255,0.55)',
+    fontFamily: TraceFonts.mono,
+    fontSize: 10.5,
+    fontVariant: ['tabular-nums'],
+  },
+  progressMoments: { color: 'rgba(255,255,255,0.4)', fontFamily: TraceFonts.body, fontSize: 10.5 },
+  rateChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 11,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  rateText: {
+    color: '#FFFFFF',
+    fontFamily: TraceFonts.mono,
+    fontSize: 11.5,
+    fontVariant: ['tabular-nums'],
+  },
 });

@@ -1,5 +1,5 @@
 // Generates assets/images/heading-beam.png — Apple-Maps-style flashlight cone
-// (apex at canvas center, spreading upward), lime #CDFF3C, per-pixel alpha:
+// (apex at canvas center, spreading upward), signal orange #FC5200, per-pixel alpha:
 // strongest at the apex, fading with distance, soft cone edges.
 // Canvas 280x280 (used at 140pt, @2x). Run: node scripts/gen-heading-beam.js
 const zlib = require('zlib');
@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 
 const W = 280, H = 280, CX = 140, CY = 140;
-const R = 0xcd, G = 0xff, B = 0x3c;
+const R = 0xfc, G = 0x52, B = 0x00;
 const RMAX = 128;        // cone length in px
 const HALF_ANGLE = 0.62; // ~35.5° half-angle
 const PENUMBRA = 0.14;   // soft edge width (rad)

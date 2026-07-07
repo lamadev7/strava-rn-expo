@@ -9,7 +9,7 @@ import {
   SplineSansMono_600SemiBold,
 } from '@expo-google-fonts/spline-sans-mono';
 import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
-import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import { DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { Text } from 'react-native';
@@ -22,9 +22,9 @@ import { useRecordingStore } from '@/features/recording/store';
 SplashScreen.preventAutoHideAsync();
 
 const traceTheme = {
-  ...DarkTheme,
+  ...DefaultTheme,
   colors: {
-    ...DarkTheme.colors,
+    ...DefaultTheme.colors,
     primary: Trace.accent,
     background: Trace.background,
     card: Trace.backgroundElement,
@@ -60,6 +60,7 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="activity/[id]" options={{ presentation: 'card' }} />
+        <Stack.Screen name="moment-capture" options={{ presentation: 'fullScreenModal' }} />
       </Stack>
     </ThemeProvider>
   );

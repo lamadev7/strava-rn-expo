@@ -1,8 +1,9 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, type CameraRef } from '@maplibre/maplibre-react-native';
 import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
+import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,23 +15,28 @@ import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
 import { activities, trackPoints } from '@/db/schema';
 import { HeadingPuck } from '@/features/map/heading-puck';
-import { formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
+import { useMomentsStore } from '@/features/moments/store';
+import { elevationStats, estimateKcal, formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
 import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
 
 const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
   { key: 'run', label: 'Run' },
   { key: 'ride', label: 'Ride' },
-  { key: 'walk', label: 'Walk' },
+  { key: 'hike', label: 'Hike' },
 ];
 
 export default function RecordScreen() {
+  const router = useRouter();
   const styleKey = useMapStyle((s) => s.styleKey);
+  const justPinned = useMomentsStore((s) => s.justPinned);
+  const clearToast = useMomentsStore((s) => s.clearToast);
   const status = useRecordingStore((s) => s.status);
   const activityType = useRecordingStore((s) => s.activityType);
   const setActivityType = useRecordingStore((s) => s.setActivityType);
   const activityId = useRecordingStore((s) => s.activityId);
   const permissionDenied = useRecordingStore((s) => s.permissionDenied);
+  const steps = useRecordingStore((s) => s.steps);
   const { start, pause, resume, stop, elapsedS } = useRecordingStore.getState();
 
   // M3: the background task writes to SQLite; this screen just reads it live.
@@ -61,16 +67,37 @@ export default function RecordScreen() {
   const durationS = elapsedS();
   const recording = status === 'recording';
   const paused = status === 'paused';
+  // live climb total — drives the hike ELEV stat and the kcal climb bonus
+  const liveElevation = useMemo(() => elevationStats(points), [points]);
+
+  // "Moment pinned" toast (design §3c) — auto-dismiss
+  useEffect(() => {
+    if (!justPinned) return;
+    const id = setTimeout(clearToast, 3400);
+    return () => clearTimeout(id);
+  }, [justPinned, clearToast]);
 
   // Follow the latest accepted point imperatively: easeTo without a zoom key
   // keeps the user's pinch zoom (declarative Camera props would re-apply a
-  // fixed zoom on every render and wipe it).
+  // fixed zoom on every render and wipe it). The FIRST follow after recording
+  // starts sets an explicit zoom — the map may still be at the world-level
+  // default if recording began before the OS puck ever got a fix.
   const cameraRef = useRef<CameraRef>(null);
+  const followingRef = useRef(false);
   const lastLng = lastPoint?.lng;
   const lastLat = lastPoint?.lat;
   useEffect(() => {
-    if (!(recording || paused) || lastLng == null || lastLat == null) return;
-    cameraRef.current?.easeTo({ center: [lastLng, lastLat], duration: 500 });
+    if (!(recording || paused)) {
+      followingRef.current = false;
+      return;
+    }
+    if (lastLng == null || lastLat == null) return;
+    if (!followingRef.current) {
+      followingRef.current = true;
+      cameraRef.current?.setStop({ center: [lastLng, lastLat], zoom: 15, duration: 500 });
+    } else {
+      cameraRef.current?.easeTo({ center: [lastLng, lastLat], duration: 500 });
+    }
   }, [recording, paused, lastLng, lastLat]);
 
   const trail: GeoJSON.Feature<GeoJSON.LineString> | null =
@@ -107,6 +134,53 @@ export default function RecordScreen() {
 
       <SafeAreaView style={styles.overlay} pointerEvents="box-none">
         {/* GPS / permission chip left, basemap switcher top-right */}
+        <View pointerEvents="box-none" style={styles.topGroup}>
+        {/* design §3a — live stats card sits at the top of the screen */}
+        {(recording || paused) && (
+          <Animated.View
+            style={styles.statsCard}
+            entering={FadeInDown.duration(280)}
+            exiting={FadeOut.duration(150)}>
+            <View style={styles.statsHeader}>
+              <Text style={styles.duration}>{formatDuration(durationS)}</Text>
+              <View style={[styles.statusPill, paused && styles.statusPillPaused]}>
+                <View style={[styles.statusPillDot, paused && styles.statusPillDotPaused]} />
+                <Text style={[styles.statusPillText, paused && styles.statusPillTextPaused]}>
+                  {paused ? 'PAUSED' : 'RECORDING'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <Stat value={formatKm(distanceM)} label="KM" />
+              <View style={styles.statDivider} />
+              {/* hiking is about climb + steps; run/ride keep pace + kcal */}
+              {activityType === 'hike' ? (
+                <>
+                  <Stat value={`↑${Math.round(liveElevation.gainM)}`} label="ELEV M" />
+                  <View style={styles.statDivider} />
+                  {steps !== null ? (
+                    <Stat value={steps.toLocaleString()} label="STEPS" />
+                  ) : (
+                    <Stat
+                      value={String(estimateKcal(distanceM, activityType, liveElevation.gainM))}
+                      label="KCAL"
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <Stat value={formatPace(distanceM, durationS)} label="PACE /KM" />
+                  <View style={styles.statDivider} />
+                  <Stat
+                    value={String(estimateKcal(distanceM, activityType, liveElevation.gainM))}
+                    label="KCAL"
+                  />
+                </>
+              )}
+            </View>
+          </Animated.View>
+        )}
+
         <View style={styles.topRow} pointerEvents="box-none">
           {permissionDenied ? (
             <ScalePressable
@@ -150,33 +224,52 @@ export default function RecordScreen() {
           />
         </View>
 
+        {/* design §3c — dark "moment pinned" toast under the stats card */}
+        {justPinned && (
+          <Animated.View
+            style={styles.toast}
+            entering={FadeInDown.springify().damping(16)}
+            exiting={FadeOut.duration(180)}
+            pointerEvents="none">
+            <View style={styles.toastIcon}>
+              <SymbolView
+                name={{ ios: 'checkmark', android: 'check', web: 'check' }}
+                size={13}
+                tintColor={Trace.accent}
+              />
+            </View>
+            <View>
+              <Text style={styles.toastTitle}>
+                Moment pinned at {formatKm(justPinned.distanceM)} km
+              </Text>
+              <Text style={styles.toastBody}>It&apos;ll pop up right here in your replay</Text>
+            </View>
+          </Animated.View>
+        )}
+        </View>
+
         <Animated.View
           style={styles.bottom}
           pointerEvents="box-none"
           layout={LinearTransition.springify().damping(18)}>
           {(recording || paused) && (
             <Animated.View
-              style={styles.statsCard}
+              style={styles.momentFab}
               entering={FadeInDown.duration(280)}
               exiting={FadeOut.duration(150)}>
-              <View style={styles.statsHeader}>
-                <Text style={styles.duration}>{formatDuration(durationS)}</Text>
-                {paused && (
-                  <Animated.Text entering={FadeIn.duration(200)} style={styles.pausedBadge}>
-                    PAUSED
-                  </Animated.Text>
-                )}
-              </View>
-              <View style={styles.statsRow}>
-                <Stat value={formatKm(distanceM)} label="KM" />
-                <View style={styles.statDivider} />
-                <Stat value={formatPace(distanceM, durationS)} label="PACE /KM" />
-                <View style={styles.statDivider} />
-                <Stat value={String(points.length)} label="POINTS" />
-              </View>
+              <ScalePressable
+                style={styles.momentButton}
+                onPress={() => router.push('/moment-capture')}
+                scaleTo={0.88}>
+                <SymbolView
+                  name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }}
+                  size={24}
+                  tintColor={Trace.accent}
+                />
+              </ScalePressable>
+              <Text style={styles.momentLabel}>Pin a moment</Text>
             </Animated.View>
           )}
-
           {status === 'idle' && (
             <Animated.View
               style={styles.segment}
@@ -207,21 +300,29 @@ export default function RecordScreen() {
             )}
             {recording && (
               <Animated.View style={styles.controlsRow} entering={FadeInDown.springify().damping(16)}>
-                <ScalePressable style={styles.secondaryButton} onPress={pause}>
-                  <Text style={styles.secondaryText}>PAUSE</Text>
+                <ScalePressable style={styles.pauseCircle} onPress={pause} scaleTo={0.9}>
+                  <SymbolView
+                    name={{ ios: 'pause.fill', android: 'pause', web: 'pause' }}
+                    size={24}
+                    tintColor={Trace.text}
+                  />
                 </ScalePressable>
-                <ScalePressable style={styles.stopButton} onPress={stop}>
-                  <Text style={styles.stopText}>STOP</Text>
+                <ScalePressable style={styles.stopCircle} onPress={stop} scaleTo={0.9}>
+                  <View style={styles.stopSquare} />
                 </ScalePressable>
               </Animated.View>
             )}
             {paused && (
               <Animated.View style={styles.controlsRow} entering={FadeInDown.springify().damping(16)}>
-                <ScalePressable style={styles.startButtonSmall} onPress={resume}>
-                  <Text style={styles.startText}>RESUME</Text>
+                <ScalePressable style={styles.pauseCircle} onPress={resume} scaleTo={0.9}>
+                  <SymbolView
+                    name={{ ios: 'play.fill', android: 'play_arrow', web: 'play_arrow' }}
+                    size={24}
+                    tintColor={Trace.accent}
+                  />
                 </ScalePressable>
-                <ScalePressable style={styles.stopButton} onPress={stop}>
-                  <Text style={styles.stopText}>STOP</Text>
+                <ScalePressable style={styles.stopCircle} onPress={stop} scaleTo={0.9}>
+                  <View style={styles.stopSquare} />
                 </ScalePressable>
               </Animated.View>
             )}
@@ -290,27 +391,55 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   bottom: { paddingHorizontal: 16, paddingBottom: BottomTabInset - 24, gap: 12 },
+  topGroup: { gap: 10 },
   statsCard: {
-    backgroundColor: `${Trace.backgroundElement}F2`,
-    borderRadius: 20,
-    padding: 18,
+    marginHorizontal: 12,
+    marginTop: 2,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderRadius: 22,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
     borderWidth: 1,
-    borderColor: Trace.border,
-    gap: 14,
+    borderColor: 'rgba(0,0,0,0.06)',
+    gap: 10,
+    boxShadow: '0 10px 30px rgba(27,27,32,0.12)',
   },
-  statsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+  },
   duration: {
     color: Trace.text,
     fontFamily: TraceFonts.monoBold,
-    fontSize: 40,
+    fontSize: 44,
+    letterSpacing: -0.4,
     fontVariant: ['tabular-nums'],
   },
-  pausedBadge: {
-    color: Trace.tierOk,
-    fontFamily: TraceFonts.display,
-    fontSize: 12,
-    letterSpacing: 1.5,
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(252,82,0,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(252,82,0,0.25)',
   },
+  statusPillPaused: {
+    backgroundColor: 'rgba(232,161,60,0.12)',
+    borderColor: 'rgba(232,161,60,0.3)',
+  },
+  statusPillDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Trace.accent },
+  statusPillDotPaused: { backgroundColor: Trace.tierOk },
+  statusPillText: {
+    color: Trace.accent,
+    fontFamily: TraceFonts.display,
+    fontSize: 11.5,
+    letterSpacing: 1,
+  },
+  statusPillTextPaused: { color: Trace.tierOk },
   statsRow: { flexDirection: 'row', alignItems: 'center' },
   stat: { flex: 1, alignItems: 'center', gap: 2 },
   statValue: {
@@ -340,7 +469,7 @@ const styles = StyleSheet.create({
   segmentText: { color: Trace.textSecondary, fontFamily: TraceFonts.displayMedium, fontSize: 14 },
   segmentTextActive: { color: Trace.accent },
   controls: { flexDirection: 'row', justifyContent: 'center' },
-  controlsRow: { flexDirection: 'row', gap: 14 },
+  controlsRow: { flexDirection: 'row', gap: 28 },
   startButton: {
     backgroundColor: Trace.accent,
     width: 76,
@@ -349,48 +478,85 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  startButtonSmall: {
-    backgroundColor: Trace.accent,
-    borderRadius: 999,
-    paddingHorizontal: 30,
-    paddingVertical: 18,
-  },
   startText: {
     color: Trace.onAccent,
     fontFamily: TraceFonts.display,
     fontSize: 14,
     letterSpacing: 1.2,
   },
-  secondaryButton: {
-    backgroundColor: Trace.backgroundElement,
-    borderRadius: 999,
-    paddingHorizontal: 30,
-    paddingVertical: 18,
+  // design §3a — white pause circle, orange stop circle with a white square
+  pauseCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: Trace.border,
+    borderColor: 'rgba(0,0,0,0.08)',
+    boxShadow: '0 8px 24px rgba(27,27,32,0.16)',
   },
-  secondaryText: {
-    color: Trace.text,
-    fontFamily: TraceFonts.display,
-    fontSize: 16,
-    letterSpacing: 1.5,
+  stopCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Trace.accent,
+    boxShadow: '0 0 0 5px rgba(252,82,0,0.16), 0 8px 24px rgba(27,27,32,0.25)',
   },
-  stopButton: {
-    backgroundColor: Trace.danger,
-    borderRadius: 999,
-    paddingHorizontal: 30,
-    paddingVertical: 18,
-  },
-  stopText: {
-    color: '#2A1215',
-    fontFamily: TraceFonts.display,
-    fontSize: 16,
-    letterSpacing: 1.5,
-  },
+  stopSquare: { width: 22, height: 22, borderRadius: 5, backgroundColor: '#FFFFFF' },
   hint: {
     color: Trace.textMuted,
     fontFamily: TraceFonts.body,
     fontSize: 13,
     textAlign: 'center',
+  },
+  // design §3c — dark toast on the light map
+  toast: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    backgroundColor: '#1B1B20',
+    boxShadow: '0 12px 30px rgba(27,27,32,0.3)',
+  },
+  toastIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(252,82,0,0.18)',
+  },
+  toastTitle: { color: '#FFFFFF', fontFamily: TraceFonts.display, fontSize: 13 },
+  toastBody: { color: 'rgba(255,255,255,0.55)', fontFamily: TraceFonts.body, fontSize: 11 },
+  // design §3a — white camera FAB with the orange focus ring
+  momentFab: { alignItems: 'center', alignSelf: 'flex-end', gap: 7 },
+  momentButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.07)',
+    boxShadow: '0 0 0 5px rgba(252,82,0,0.14), 0 10px 26px rgba(27,27,32,0.2)',
+  },
+  momentLabel: {
+    color: Trace.text,
+    fontFamily: TraceFonts.display,
+    fontSize: 11,
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+    overflow: 'hidden',
   },
 });

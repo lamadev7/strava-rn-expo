@@ -26,8 +26,14 @@ import { haversineM, toTrackPoint, type ActivityType, type TrackPoint } from './
 
 const WARMUP_ACCURACY_M = 15;
 const WARMUP_TIMEOUT_MS = 10_000;
-const HARD_ACCURACY_M: Record<ActivityType, number> = { run: 25, walk: 25, ride: 35 };
-const MAX_SPEED_MS: Record<ActivityType, number> = { run: 12, walk: 12, ride: 25 };
+/** hike is looser than run — trails mean tree cover / canyons degrade fixes */
+const HARD_ACCURACY_M: Record<ActivityType, number> = { run: 25, hike: 30, ride: 35 };
+/**
+ * Physically plausible speed ceiling per activity. Hike is deliberately tight
+ * (4 m/s ≈ 14.4 km/h — covers a downhill jog burst, rejects bus/car
+ * segments); run covers a full sprint; ride covers fast descents.
+ */
+const MAX_SPEED_MS: Record<ActivityType, number> = { run: 12, hike: 4, ride: 25 };
 const EMIT_STEP_M = 5;
 /** doppler speed below this (m/s) = stationary; GPS chips report this reliably */
 const STATIONARY_SPEED_MS = 0.4;
@@ -36,7 +42,7 @@ const MIN_KALMAN_SPEED_MS = 0.5;
 /** EMA blend for the smoothed-velocity estimate */
 const SPEED_EMA_ALPHA = 0.4;
 /** process noise (m/s): how unpredictably true movement drifts, by type */
-const PROCESS_NOISE_MS: Record<ActivityType, number> = { run: 3, walk: 1.5, ride: 6 };
+const PROCESS_NOISE_MS: Record<ActivityType, number> = { run: 3, hike: 1.5, ride: 6 };
 
 type KalmanState = {
   lat: number;
@@ -49,6 +55,13 @@ type KalmanState = {
 export class GpsPipeline {
   private kalman: KalmanState | null = null;
   private lastEmitted: { lat: number; lng: number } | null = null;
+  /**
+   * Last RAW fix that survived the hard gates. The speed gate must compare
+   * raw-to-raw: the Kalman position lags a fast mover by a steady offset, so
+   * gating raw-vs-kalman inflates implied speed and (once over the ceiling)
+   * rejects forever — the filter never catches up.
+   */
+  private lastRaw: { lat: number; lng: number; timestamp: number } | null = null;
   private firstSeenAt: number | null = null;
   /** EMA of the smoothed position's own velocity — near zero when parked */
   private kalmanSpeedEma = 0;
@@ -66,6 +79,11 @@ export class GpsPipeline {
         timestamp: lastStored.timestamp,
       };
       this.lastEmitted = { lat: lastStored.lat, lng: lastStored.lng };
+      this.lastRaw = {
+        lat: lastStored.lat,
+        lng: lastStored.lng,
+        timestamp: lastStored.timestamp,
+      };
     }
   }
 
@@ -89,14 +107,19 @@ export class GpsPipeline {
         timestamp: raw.timestamp,
       };
       this.lastEmitted = { lat: raw.lat, lng: raw.lng };
+      this.lastRaw = { lat: raw.lat, lng: raw.lng, timestamp: raw.timestamp };
       return { ...raw };
     }
 
-    // 2. Hard gates
+    // 2. Hard gates — speed measured raw-to-raw (see lastRaw)
     if (accuracy > HARD_ACCURACY_M[this.activityType]) return null;
     const dtS = (raw.timestamp - this.kalman.timestamp) / 1000;
     if (dtS <= 0) return null;
-    if (haversineM(this.kalman, raw) / dtS > MAX_SPEED_MS[this.activityType]) return null;
+    const rawRef = this.lastRaw ?? this.kalman;
+    const rawDtS = (raw.timestamp - rawRef.timestamp) / 1000;
+    if (rawDtS <= 0) return null;
+    if (haversineM(rawRef, raw) / rawDtS > MAX_SPEED_MS[this.activityType]) return null;
+    this.lastRaw = { lat: raw.lat, lng: raw.lng, timestamp: raw.timestamp };
 
     // 3. Kalman update (predict + correct)
     const q = PROCESS_NOISE_MS[this.activityType];

@@ -3,7 +3,8 @@ import { create } from 'zustand';
 
 /**
  * Basemap preference, picked via the segmented switcher:
- * - "dark"      — the Trace aesthetic (minimal, lime pops). OpenFreeMap, keyless.
+ * - "light"     — the Trace aesthetic (warm minimal, orange pops). OpenFreeMap Positron, keyless.
+ * - "dark"      — near-black basemap; also forced during the cinematic replay. OpenFreeMap, keyless.
  * - "liberty"   — information-dense OSM style (place names, POIs). OpenFreeMap, keyless.
  * - "satellite" — Esri World Imagery draped over AWS Terrarium 3D terrain.
  *   Both free with attribution, keyless. Photorealistic 3D buildings are NOT
@@ -38,9 +39,10 @@ const SATELLITE_STYLE: StyleSpecification = {
   terrain: { source: 'terrainSource', exaggeration: 1.15 },
 };
 
-export type MapStyleKey = 'dark' | 'liberty' | 'satellite';
+export type MapStyleKey = 'light' | 'dark' | 'liberty' | 'satellite';
 
 export const MAP_STYLES: Record<MapStyleKey, string | StyleSpecification> = {
+  light: 'https://tiles.openfreemap.org/styles/positron',
   dark: 'https://tiles.openfreemap.org/styles/dark',
   liberty: 'https://tiles.openfreemap.org/styles/liberty',
   satellite: SATELLITE_STYLE,
@@ -52,6 +54,6 @@ type MapStyleState = {
 };
 
 export const useMapStyle = create<MapStyleState>((set) => ({
-  styleKey: 'dark',
+  styleKey: 'light',
   setStyle: (styleKey) => set({ styleKey }),
 }));

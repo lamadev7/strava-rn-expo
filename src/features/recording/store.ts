@@ -4,11 +4,13 @@ import { Platform } from 'react-native';
 import { create } from 'zustand';
 
 import { db } from '@/db/client';
-import { activities, trackPoints } from '@/db/schema';
+import { activities, moments, trackPoints } from '@/db/schema';
 import { Trace } from '@/constants/theme';
+import { deleteMomentPhoto } from '@/features/moments/photos';
 
 import { RECORDING_TASK } from './background-task';
-import { elevationGainM, totalDistanceM, type ActivityType, type TrackPoint } from './geo';
+import { elevationStats, totalDistanceM, type ActivityType, type TrackPoint } from './geo';
+import { PedometerSession, tracksSteps } from './steps';
 
 /**
  * M3: ingestion happens in the background task (background-task.ts) via
@@ -27,6 +29,8 @@ type RecordingState = {
   activeSinceMs: number | null;
   accumulatedS: number;
   permissionDenied: boolean;
+  /** live pedometer total; null when not tracking (ride / unsupported / denied) */
+  steps: number | null;
 
   setActivityType: (t: ActivityType) => void;
   start: () => Promise<void>;
@@ -72,6 +76,9 @@ async function stopUpdates() {
   }
 }
 
+/** one pedometer session per recording; lives beside the location task */
+const pedometer = new PedometerSession();
+
 export const useRecordingStore = create<RecordingState>((set, get) => ({
   status: 'idle',
   activityType: 'run',
@@ -80,6 +87,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   activeSinceMs: null,
   accumulatedS: 0,
   permissionDenied: false,
+  steps: null,
 
   setActivityType: (t) => {
     if (get().status === 'idle') set({ activityType: t });
@@ -113,13 +121,19 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       startedAt,
       activeSinceMs: Date.now(),
       accumulatedS: 0,
+      steps: null,
     });
+    if (tracksSteps(get().activityType)) {
+      const tracking = await pedometer.start(startedAt, (steps) => set({ steps }));
+      if (tracking) set({ steps: 0 });
+    }
   },
 
   pause: async () => {
     const { status, elapsedS, activityId } = get();
     if (status !== 'recording') return;
     await stopUpdates();
+    pedometer.pause();
     set({ status: 'paused', accumulatedS: elapsedS(), activeSinceMs: null });
     if (activityId)
       await db.update(activities).set({ status: 'paused' }).where(eq(activities.id, activityId));
@@ -142,12 +156,15 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       return;
     }
     set({ status: 'recording', activeSinceMs: Date.now() });
+    pedometer.resume((steps) => set({ steps }));
   },
 
   stop: async () => {
     const { status, activityId, elapsedS } = get();
     if (status === 'idle' || !activityId) return;
     await stopUpdates();
+    const endedAt = Date.now();
+    const steps = await pedometer.stop(endedAt).catch(() => null);
     const durationS = Math.round(elapsedS());
     const pts = await db
       .select()
@@ -156,15 +173,18 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       .orderBy(trackPoints.seq);
     const track: TrackPoint[] = pts;
     const distanceM = totalDistanceM(track);
+    const elevation = elevationStats(track);
     await db
       .update(activities)
       .set({
         status: 'complete',
-        endedAt: Date.now(),
+        endedAt,
         distanceM,
         durationS,
         avgPaceSecPerKm: distanceM > 50 ? durationS / (distanceM / 1000) : null,
-        elevGainM: elevationGainM(track),
+        elevGainM: elevation.gainM,
+        elevLossM: elevation.lossM,
+        steps,
       })
       .where(eq(activities.id, activityId));
     set({
@@ -173,10 +193,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       startedAt: null,
       activeSinceMs: null,
       accumulatedS: 0,
+      steps: null,
     });
   },
 
   deleteActivity: async (id) => {
+    // moment rows cascade with the activity, but their photos live on disk
+    const rows = await db.select().from(moments).where(eq(moments.activityId, id));
+    for (const m of rows) deleteMomentPhoto(m.photo);
     await db.delete(activities).where(eq(activities.id, id));
   },
 
@@ -203,6 +227,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       const track: TrackPoint[] = pts;
       const distanceM = totalDistanceM(track);
       const durationS = Math.round((pts[pts.length - 1].timestamp - pts[0].timestamp) / 1000);
+      const elevation = elevationStats(track);
       await db
         .update(activities)
         .set({
@@ -211,7 +236,8 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
           distanceM,
           durationS,
           avgPaceSecPerKm: distanceM > 50 ? durationS / (distanceM / 1000) : null,
-          elevGainM: elevationGainM(track),
+          elevGainM: elevation.gainM,
+          elevLossM: elevation.lossM,
         })
         .where(eq(activities.id, orphan.id));
     }

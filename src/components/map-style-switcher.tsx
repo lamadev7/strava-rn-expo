@@ -12,18 +12,34 @@ const SEG_H = 32;
 const PAD = 3;
 
 const OPTIONS: { key: MapStyleKey; icon: SymbolViewProps['name'] }[] = [
+  { key: 'light', icon: { ios: 'sun.max.fill', android: 'light_mode', web: 'light_mode' } },
   { key: 'dark', icon: { ios: 'moon.fill', android: 'dark_mode', web: 'dark_mode' } },
-  { key: 'liberty', icon: { ios: 'sun.max.fill', android: 'light_mode', web: 'light_mode' } },
+  { key: 'liberty', icon: { ios: 'map.fill', android: 'map', web: 'map' } },
   { key: 'satellite', icon: { ios: 'globe.americas.fill', android: 'public', web: 'public' } },
 ];
 
 /**
  * Segmented basemap switcher — the active segment is a sliding accent pill
  * (springs between positions), inactive segments are ghost icons.
+ *
+ * Uncontrolled by default (reads/writes the global map-style store); pass
+ * `value` + `onSelect` for a locally controlled instance (e.g. the replay
+ * overlay, which defaults to the dark cinematic map without touching the
+ * user's global preference).
  */
-export function MapStyleSwitcher({ onChanged }: { onChanged?: (key: MapStyleKey) => void }) {
-  const styleKey = useMapStyle((s) => s.styleKey);
-  const setStyle = useMapStyle((s) => s.setStyle);
+export function MapStyleSwitcher({
+  onChanged,
+  value,
+  onSelect,
+}: {
+  onChanged?: (key: MapStyleKey) => void;
+  value?: MapStyleKey;
+  onSelect?: (key: MapStyleKey) => void;
+}) {
+  const globalKey = useMapStyle((s) => s.styleKey);
+  const setGlobalStyle = useMapStyle((s) => s.setStyle);
+  const styleKey = value ?? globalKey;
+  const setStyle = onSelect ?? setGlobalStyle;
   const activeIdx = OPTIONS.findIndex((o) => o.key === styleKey);
 
   const x = useSharedValue(activeIdx * SEG_W);

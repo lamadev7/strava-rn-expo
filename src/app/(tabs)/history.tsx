@@ -12,7 +12,7 @@ import { activities, type ActivityRow } from '@/db/schema';
 import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
 
-const TYPE_LABEL = { run: 'Run', ride: 'Ride', walk: 'Walk' } as const;
+const TYPE_LABEL = { run: 'Run', ride: 'Ride', hike: 'Hike' } as const;
 
 /** M2: reads SQLite via useLiveQuery — updates live as recordings complete. */
 export default function HistoryScreen() {
