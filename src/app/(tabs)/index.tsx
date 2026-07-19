@@ -13,7 +13,7 @@ import { ScalePressable } from '@/components/scale-pressable';
 
 import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
-import { activities, trackPoints } from '@/db/schema';
+import { activities, photoPins, trackPoints } from '@/db/schema';
 import { HeadingPuck } from '@/features/map/heading-puck';
 import { usePastPaths } from '@/features/map/past-paths';
 import { useMomentsStore } from '@/features/moments/store';
@@ -57,6 +57,23 @@ export default function RecordScreen() {
   const distanceM = activityRows?.[0]?.distanceM ?? 0;
   // exclude the in-progress activity — it's drawn as the bright live trail
   const pastPaths = usePastPaths(activityId);
+
+  // saved camera-roll photo pins (photo-map page) — dots only, no images
+  const { data: pinRows2 } = useLiveQuery(db.select().from(photoPins));
+  const photoDots: GeoJSON.FeatureCollection | null = useMemo(
+    () =>
+      pinRows2?.length
+        ? {
+            type: 'FeatureCollection',
+            features: pinRows2.map((p) => ({
+              type: 'Feature' as const,
+              properties: {},
+              geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+            })),
+          }
+        : null,
+    [pinRows2],
+  );
 
   // 1 Hz clock for duration/pace display while recording (TECH_SPEC §5.5 throttle)
   const [, tick] = useState(0);
@@ -131,6 +148,21 @@ export default function RecordScreen() {
               type="line"
               paint={{ 'line-color': Trace.accent, 'line-width': 3, 'line-opacity': 0.3 }}
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+            />
+          </GeoJSONSource>
+        )}
+        {photoDots && (
+          <GeoJSONSource id="photo-pins" data={photoDots}>
+            <Layer
+              id="photo-pins-circles"
+              type="circle"
+              paint={{
+                'circle-radius': 3.5,
+                'circle-color': Trace.tierGreat,
+                'circle-stroke-width': 1.2,
+                'circle-stroke-color': '#0E120C',
+                'circle-opacity': 0.85,
+              }}
             />
           </GeoJSONSource>
         )}

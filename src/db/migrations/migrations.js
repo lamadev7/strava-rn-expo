@@ -7,6 +7,7 @@ import m0002 from './0002_flaky_gateway.sql';
 import m0003 from './0003_bright_arachne.sql';
 import m0004 from './0004_steady_dazzler.sql';
 import m0005 from './0005_abnormal_naoko.sql';
+import m0006 from './0006_quick_monster_badoon.sql';
 
   export default {
     journal,
@@ -16,7 +17,8 @@ m0001,
 m0002,
 m0003,
 m0004,
-m0005
+m0005,
+m0006
     }
   }
   

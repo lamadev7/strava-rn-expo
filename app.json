@@ -56,6 +56,12 @@
       "@maplibre/maplibre-react-native",
       "expo-sqlite",
       [
+        "expo-media-library",
+        {
+          "photosPermission": "Trace reads your photo library's location tags to map where your photos were taken."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "Trace uses the camera to pin photo moments to the exact spot on your route."

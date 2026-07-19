@@ -43,6 +43,13 @@
       "when": 1784458755279,
       "tag": "0005_abnormal_naoko",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784459943230,
+      "tag": "0006_quick_monster_badoon",
+      "breakpoints": true
     }
   ]
 }

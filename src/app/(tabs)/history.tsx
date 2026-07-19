@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useRouter } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ const TYPE_LABEL = { run: 'Run', ride: 'Ride', hike: 'Hike' } as const;
 
 /** M2: reads SQLite via useLiveQuery — updates live as recordings complete. */
 export default function HistoryScreen() {
+  const router = useRouter();
   const { data } = useLiveQuery(
     db
       .select()
@@ -28,7 +30,19 @@ export default function HistoryScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
-        <Text style={styles.title}>History</Text>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>History</Text>
+          <ScalePressable
+            style={styles.photoMapButton}
+            onPress={() => router.push('/photo-map')}
+            hitSlop={8}>
+            <SymbolView
+              name={{ ios: 'photo.on.rectangle.angled', android: 'photo_library', web: 'photo_library' }}
+              size={16}
+              tintColor={Trace.accent}
+            />
+          </ScalePressable>
+        </View>
         <Text style={styles.subtitle}>Every run&apos;s a doodle.</Text>
       </View>
       <Animated.FlatList
@@ -90,6 +104,17 @@ function ActivityListRow({ activity }: { activity: ActivityRow }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Trace.background },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  photoMapButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Trace.backgroundElement,
+    borderWidth: 1,
+    borderColor: Trace.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: { color: Trace.text, fontFamily: TraceFonts.display, fontSize: 34 },
   subtitle: { color: Trace.textSecondary, fontFamily: TraceFonts.body, fontSize: 16 },
   list: { paddingHorizontal: 20, paddingBottom: BottomTabInset + 24, gap: 10 },

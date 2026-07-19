@@ -58,6 +58,17 @@ export const moments = sqliteTable(
   (t) => [index('moments_activity').on(t.activityId)],
 );
 
+/** camera-roll photos with EXIF GPS, mapped as dots ("photo map") — no image data stored */
+export const photoPins = sqliteTable('photo_pins', {
+  /** media-library asset id */
+  id: text('id').primaryKey(),
+  lat: real('lat').notNull(),
+  lng: real('lng').notNull(),
+  timestamp: integer('timestamp').notNull(),
+});
+
+export type PhotoPinRow = typeof photoPins.$inferSelect;
+
 export type ActivityRow = typeof activities.$inferSelect;
 export type TrackPointRow = typeof trackPoints.$inferSelect;
 export type MomentRow = typeof moments.$inferSelect;
