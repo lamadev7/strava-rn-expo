@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { db } from '@/db/client';
 import { activities, moments, trackPoints } from '@/db/schema';
 
+import { labelMoment } from '../recording/places';
 import { useRecordingStore } from '../recording/store';
 import { storeMomentPhoto } from './photos';
 
@@ -58,6 +59,9 @@ export const useMomentsStore = create<MomentsState>((set) => ({
       timestamp: Date.now(),
     });
     set({ justPinned: { distanceM, at: Date.now() } });
+    // fire-and-forget: place name for the replay popup card; launch-time
+    // backfill retries any that fail (offline captures etc.)
+    labelMoment(id, lastPoint.lat, lastPoint.lng).catch(() => {});
     return true;
   },
 

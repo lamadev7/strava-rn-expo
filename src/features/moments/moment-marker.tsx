@@ -29,11 +29,13 @@ const CHIP_SCALE = 0.23;
 export function MomentMarker({
   uri,
   caption,
+  place,
   phase,
   onPress,
 }: {
   uri: string;
   caption: string;
+  place?: string | null;
   phase: MomentPhase;
   onPress?: () => void;
 }) {
@@ -75,6 +77,11 @@ export function MomentMarker({
         ) : (
           <View style={styles.photo} />
         )}
+        {place && (
+          <Animated.Text style={[styles.place, captionStyle]} numberOfLines={1}>
+            {place}
+          </Animated.Text>
+        )}
         <Animated.Text style={[styles.caption, captionStyle]} numberOfLines={1}>
           {caption}
         </Animated.Text>
@@ -98,6 +105,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   photo: { width: CARD_W - 12, height: CARD_W - 12, borderRadius: 11 },
+  place: {
+    fontFamily: TraceFonts.displayMedium,
+    fontSize: 10.5,
+    color: Trace.text,
+    maxWidth: CARD_W - 16,
+  },
   caption: {
     fontFamily: TraceFonts.mono,
     fontSize: 9.5,

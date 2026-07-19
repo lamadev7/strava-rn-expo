@@ -2,7 +2,7 @@ import { eq, isNull, and } from 'drizzle-orm';
 import * as Location from 'expo-location';
 
 import { db } from '@/db/client';
-import { activities, trackPoints, type ActivityRow } from '@/db/schema';
+import { activities, moments, trackPoints, type ActivityRow } from '@/db/schema';
 
 /**
  * Card titles from the route's endpoints — "Gairidhara → Lazimpat" — via the
@@ -50,10 +50,17 @@ export async function labelActivity(activityId: string): Promise<void> {
   await db.update(activities).set({ startPlace, endPlace }).where(eq(activities.id, activityId));
 }
 
+/** geocode one moment's pin location and store it for the replay popup card */
+export async function labelMoment(momentId: string, lat: number, lng: number): Promise<void> {
+  const place = await placeAt(lat, lng);
+  if (!place) return; // stays NULL so a later launch retries
+  await db.update(moments).set({ place }).where(eq(moments.id, momentId));
+}
+
 /**
- * Backfill titles for completed activities recorded before this feature (or
- * whose geocode failed). Sequential and bounded per launch — gentle on the
- * OS geocoder and on app-start time.
+ * Backfill titles for completed activities and places for moments recorded
+ * before this feature (or whose geocode failed). Sequential and bounded per
+ * launch — gentle on the OS geocoder and on app-start time.
  */
 export async function backfillPlaces(maxPerLaunch = 20): Promise<void> {
   const missing: Pick<ActivityRow, 'id'>[] = await db
@@ -63,5 +70,13 @@ export async function backfillPlaces(maxPerLaunch = 20): Promise<void> {
     .limit(maxPerLaunch);
   for (const row of missing) {
     await labelActivity(row.id);
+  }
+  const unlabeledMoments = await db
+    .select({ id: moments.id, lat: moments.lat, lng: moments.lng })
+    .from(moments)
+    .where(isNull(moments.place))
+    .limit(maxPerLaunch);
+  for (const m of unlabeledMoments) {
+    await labelMoment(m.id, m.lat, m.lng);
   }
 }

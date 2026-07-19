@@ -52,6 +52,8 @@ export const moments = sqliteTable(
     distanceM: real('distance_m').notNull(),
     elapsedS: integer('elapsed_s').notNull(),
     timestamp: integer('timestamp').notNull(),
+    /** reverse-geocoded place name shown on the replay popup card */
+    place: text('place'),
   },
   (t) => [index('moments_activity').on(t.activityId)],
 );

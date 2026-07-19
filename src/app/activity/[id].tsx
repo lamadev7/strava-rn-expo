@@ -84,6 +84,11 @@ export default function ActivityDetailScreen() {
   const momentList = momentRows ?? [];
   const replaying = replayMode && playback.frame != null;
 
+  // ——— 10 s auto-close: any open card collapses on its own ———
+  // dismissed ids force a dwell-derived 'open' down to 'chip'; a chip tap
+  // (manual openMoment) reopens and restarts its own 10 s clock.
+  const [dismissed, setDismissed] = useState<string[]>([]);
+
   // ——— replay rotation: app is portrait-locked; replay may go landscape ———
   useEffect(() => {
     if (!replayMode) return;
@@ -115,6 +120,17 @@ export default function ActivityDetailScreen() {
   useEffect(() => {
     if (currentMomentId) setOpenMoment((cur) => (cur === currentMomentId ? cur : null));
   }, [currentMomentId]);
+
+  // the card currently showing large, from either source (manual tap wins)
+  const activeOpenId = openMoment ?? (currentMomentId && !dismissed.includes(currentMomentId) ? currentMomentId : null);
+  useEffect(() => {
+    if (!activeOpenId) return;
+    const t = setTimeout(() => {
+      setDismissed((prev) => (prev.includes(activeOpenId) ? prev : [...prev, activeOpenId]));
+      setOpenMoment((cur) => (cur === activeOpenId ? null : cur));
+    }, 10_000);
+    return () => clearTimeout(t);
+  }, [activeOpenId]);
 
   if (!activity) {
     return (
@@ -159,7 +175,9 @@ export default function ActivityDetailScreen() {
     if (!replaying) return 'hidden';
     const gone = playback.frame!.distanceM - m.distanceM;
     if (gone < 0) return 'hidden';
-    return m.id === currentMomentId && gone < dwellM ? 'open' : 'chip';
+    return m.id === currentMomentId && gone < dwellM && !dismissed.includes(m.id)
+      ? 'open'
+      : 'chip';
   };
   const toggleMoment = (momentId: string) =>
     setOpenMoment((cur) => (cur === momentId ? null : momentId));
@@ -167,12 +185,14 @@ export default function ActivityDetailScreen() {
   const startReplay = () => {
     setReplayMode(true);
     setReplayStyle('dark');
+    setDismissed([]);
     if (!playback.playing) playback.toggle();
   };
   const exitReplay = () => {
     playback.reset();
     setReplayMode(false);
     setOpenMoment(null);
+    setDismissed([]);
   };
 
   const when = new Date(activity.startedAt).toLocaleString(undefined, {
@@ -265,6 +285,7 @@ export default function ActivityDetailScreen() {
                     <MomentMarker
                       uri={momentPhotoUri(m.photo)}
                       caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
+                      place={m.place}
                       phase={openMoment === m.id ? 'open' : 'hidden'}
                       onPress={() => toggleMoment(m.id)}
                     />
@@ -418,6 +439,7 @@ export default function ActivityDetailScreen() {
                 <MomentMarker
                   uri={momentPhotoUri(m.photo)}
                   caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
+                  place={m.place}
                   phase={phaseFor(m)}
                   onPress={() => toggleMoment(m.id)}
                 />
