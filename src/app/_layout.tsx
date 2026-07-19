@@ -69,7 +69,6 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="activity/[id]" options={{ presentation: 'card' }} />
-        <Stack.Screen name="moment-capture" options={{ presentation: 'fullScreenModal' }} />
         <Stack.Screen name="photo-map" />
       </Stack>
     </ThemeProvider>

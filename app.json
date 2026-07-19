@@ -62,12 +62,6 @@
         }
       ],
       [
-        "expo-camera",
-        {
-          "cameraPermission": "Trace uses the camera to pin photo moments to the exact spot on your route."
-        }
-      ],
-      [
         "expo-sensors",
         {
           "motionPermission": "Trace uses motion data to count your steps while you record a walk or run."

@@ -16,7 +16,6 @@ import { db } from '@/db/client';
 import { activities, photoPins, trackPoints } from '@/db/schema';
 import { HeadingPuck } from '@/features/map/heading-puck';
 import { usePastPaths } from '@/features/map/past-paths';
-import { useMomentsStore } from '@/features/moments/store';
 import { elevationStats, estimateKcal, formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
 import { MAP_STYLES, useMapStyle } from '@/features/settings/map-style';
@@ -33,8 +32,6 @@ const IDLE_ZOOM = 4.7;
 export default function RecordScreen() {
   const router = useRouter();
   const styleKey = useMapStyle((s) => s.styleKey);
-  const justPinned = useMomentsStore((s) => s.justPinned);
-  const clearToast = useMomentsStore((s) => s.clearToast);
   const status = useRecordingStore((s) => s.status);
   const activityType = useRecordingStore((s) => s.activityType);
   const setActivityType = useRecordingStore((s) => s.setActivityType);
@@ -92,13 +89,6 @@ export default function RecordScreen() {
   const paused = status === 'paused';
   // live climb total — drives the hike ELEV stat and the kcal climb bonus
   const liveElevation = useMemo(() => elevationStats(points), [points]);
-
-  // "Moment pinned" toast (design §3c) — auto-dismiss
-  useEffect(() => {
-    if (!justPinned) return;
-    const id = setTimeout(clearToast, 3400);
-    return () => clearTimeout(id);
-  }, [justPinned, clearToast]);
 
   // Follow the latest accepted point imperatively: easeTo without a zoom key
   // keeps the user's pinch zoom (declarative Camera props would re-apply a
@@ -283,52 +273,12 @@ export default function RecordScreen() {
           />
         </View>
 
-        {/* design §3c — dark "moment pinned" toast under the stats card */}
-        {justPinned && (
-          <Animated.View
-            style={styles.toast}
-            entering={FadeInDown.springify().damping(16)}
-            exiting={FadeOut.duration(180)}
-            pointerEvents="none">
-            <View style={styles.toastIcon}>
-              <SymbolView
-                name={{ ios: 'checkmark', android: 'check', web: 'check' }}
-                size={13}
-                tintColor={Trace.accent}
-              />
-            </View>
-            <View>
-              <Text style={styles.toastTitle}>
-                Moment pinned at {formatKm(justPinned.distanceM)} km
-              </Text>
-              <Text style={styles.toastBody}>It&apos;ll pop up right here in your replay</Text>
-            </View>
-          </Animated.View>
-        )}
         </View>
 
         <Animated.View
           style={styles.bottom}
           pointerEvents="box-none"
           layout={LinearTransition.springify().damping(18)}>
-          {(recording || paused) && (
-            <Animated.View
-              style={styles.momentFab}
-              entering={FadeInDown.duration(280)}
-              exiting={FadeOut.duration(150)}>
-              <ScalePressable
-                style={styles.momentButton}
-                onPress={() => router.push('/moment-capture')}
-                scaleTo={0.88}>
-                <SymbolView
-                  name={{ ios: 'camera.fill', android: 'photo_camera', web: 'photo_camera' }}
-                  size={24}
-                  tintColor={Trace.accent}
-                />
-              </ScalePressable>
-              <Text style={styles.momentLabel}>Pin a moment</Text>
-            </Animated.View>
-          )}
           {status === 'idle' && (
             <Animated.View
               style={styles.segment}
@@ -570,52 +520,5 @@ const styles = StyleSheet.create({
     fontFamily: TraceFonts.body,
     fontSize: 13,
     textAlign: 'center',
-  },
-  // design §3c — dark toast on the light map
-  toast: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 11,
-    paddingHorizontal: 16,
-    borderRadius: 18,
-    backgroundColor: '#1B1B20',
-    boxShadow: '0 12px 30px rgba(27,27,32,0.3)',
-  },
-  toastIcon: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(252,82,0,0.18)',
-  },
-  toastTitle: { color: '#FFFFFF', fontFamily: TraceFonts.display, fontSize: 13 },
-  toastBody: { color: 'rgba(255,255,255,0.55)', fontFamily: TraceFonts.body, fontSize: 11 },
-  // design §3a — white camera FAB with the orange focus ring
-  momentFab: { alignItems: 'center', alignSelf: 'flex-end', gap: 7 },
-  momentButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.07)',
-    boxShadow: '0 0 0 5px rgba(252,82,0,0.14), 0 10px 26px rgba(27,27,32,0.2)',
-  },
-  momentLabel: {
-    color: Trace.text,
-    fontFamily: TraceFonts.display,
-    fontSize: 11,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0.06)',
-    overflow: 'hidden',
   },
 });
