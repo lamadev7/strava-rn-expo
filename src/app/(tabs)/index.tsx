@@ -114,7 +114,7 @@ export default function RecordScreen() {
     if (lastLng == null || lastLat == null) return;
     if (!followingRef.current) {
       followingRef.current = true;
-      cameraRef.current?.setStop({ center: [lastLng, lastLat], zoom: 14.5, duration: 500 });
+      cameraRef.current?.setStop({ center: [lastLng, lastLat], zoom: 13, duration: 500 });
     } else {
       cameraRef.current?.easeTo({ center: [lastLng, lastLat], duration: 500 });
     }
@@ -136,7 +136,7 @@ export default function RecordScreen() {
             at the user's current zoom; idle tracks the OS puck */}
         <Camera
           ref={cameraRef}
-          initialViewState={{ zoom: 14.5 }}
+          initialViewState={{ zoom: 13 }}
           trackUserLocation={recording || paused ? undefined : 'default'}
         />
         <HeadingPuck />
