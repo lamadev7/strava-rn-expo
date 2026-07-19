@@ -115,17 +115,27 @@ export default function ActivityDetailScreen() {
 
   const momentList = momentRows ?? [];
   // popup choreography (design §3f): pop when the replay marker passes the
-  // pin, dwell for ~20% of the run's distance, then settle into a tappable chip
+  // pin, dwell for ~20% of the run's distance, then settle into a tappable chip.
+  // Single-popup rule: only the LATEST passed moment may hold the open card —
+  // the instant a new one pops, every earlier card collapses to its chip.
   const dwellM = Math.max(200, activity.distanceM * 0.2);
+  const currentMomentId = replaying
+    ? momentList.filter((m) => playback.frame!.distanceM >= m.distanceM).at(-1)?.id ?? null
+    : null;
   const phaseFor = (m: MomentRow): MomentPhase => {
     if (openMoment === m.id) return 'open';
     if (!replaying) return 'hidden';
     const gone = playback.frame!.distanceM - m.distanceM;
     if (gone < 0) return 'hidden';
-    return gone < dwellM ? 'open' : 'chip';
+    return m.id === currentMomentId && gone < dwellM ? 'open' : 'chip';
   };
   const toggleMoment = (momentId: string) =>
     setOpenMoment((cur) => (cur === momentId ? null : momentId));
+
+  // a manually opened card also yields as soon as the replay pops the next one
+  useEffect(() => {
+    if (currentMomentId) setOpenMoment((cur) => (cur === currentMomentId ? cur : null));
+  }, [currentMomentId]);
 
   const startReplay = () => {
     setReplayMode(true);
