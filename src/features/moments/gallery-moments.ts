@@ -53,7 +53,7 @@ export function useGalleryMoments(
           .gte(MediaLibrary.AssetField.CREATION_TIME, startedAt)
           .lte(MediaLibrary.AssetField.CREATION_TIME, endedAt)
           .orderBy(MediaLibrary.AssetField.CREATION_TIME)
-          .limit(100)
+          .limit(48)
           .exe();
 
         // cumulative path distance per point, for timestamp → distance mapping

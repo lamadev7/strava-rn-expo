@@ -28,7 +28,7 @@ const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
 ];
 
 /** default map scale when idle — district level (~6 km across) */
-const IDLE_ZOOM = 5;
+const IDLE_ZOOM = 4.7;
 
 export default function RecordScreen() {
   const router = useRouter();

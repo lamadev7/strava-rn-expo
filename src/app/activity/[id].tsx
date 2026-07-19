@@ -39,6 +39,10 @@ type DisplayMoment = {
 
 /** design §3d — the cinematic replay always runs on the dark basemap */
 const REPLAY_BG = '#16171B';
+/** most moment markers the map/replay will mount (2 native views each) */
+const MAX_MAP_MOMENTS = 20;
+/** grid cells mounted before the "Show all" tap */
+const GRID_FIRST_PAGE = 24;
 
 export default function ActivityDetailScreen() {
   const { id, replay } = useLocalSearchParams<{ id: string; replay?: string }>();
@@ -116,7 +120,23 @@ export default function ActivityDetailScreen() {
     }));
     return [...own, ...gallery].sort((a, b) => a.distanceM - b.distanceM);
   }, [momentRows, galleryMoments]);
+
+  // Map markers are native views (2 per moment: pin + card) — dozens of them
+  // is what memory-kills the screen. Cap what the MAP shows to an even sample
+  // along the route; the grid below still lists every photo.
+  const mapMoments = useMemo(() => {
+    if (momentList.length <= MAX_MAP_MOMENTS) return momentList;
+    const step = momentList.length / MAX_MAP_MOMENTS;
+    const sampled: DisplayMoment[] = [];
+    for (let i = 0; i < MAX_MAP_MOMENTS; i++) sampled.push(momentList[Math.floor(i * step)]);
+    return sampled;
+  }, [momentList]);
   const replaying = replayMode && playback.frame != null;
+
+  // grid mounts in stages — all cells at once (no virtualization inside the
+  // page scroll) was part of the memory spike on photo-heavy activities
+  const [showAllGrid, setShowAllGrid] = useState(false);
+  const gridMoments = showAllGrid ? momentList : momentList.slice(0, GRID_FIRST_PAGE);
 
   // ——— 10 s auto-close: any open card collapses on its own ———
   // dismissed ids force a dwell-derived 'open' down to 'chip'; a chip tap
@@ -293,7 +313,7 @@ export default function ActivityDetailScreen() {
                     />
                   </GeoJSONSource>
                 )}
-                {momentList.map((m) => (
+                {mapMoments.map((m) => (
                   <Marker key={`pin-${m.id}`} id={`moment-pin-${m.id}`} lngLat={[m.lng, m.lat]}>
                     <ScalePressable
                       style={styles.momentPin}
@@ -308,7 +328,7 @@ export default function ActivityDetailScreen() {
                     </ScalePressable>
                   </Marker>
                 ))}
-                {momentList.map((m) => (
+                {mapMoments.map((m) => (
                   <Marker
                     key={`card-${m.id}`}
                     id={`moment-card-${m.id}`}
@@ -374,7 +394,7 @@ export default function ActivityDetailScreen() {
                   dozens of moments stay cheap. flex-based cells adapt to any
                   screen width; maxWidth keeps a short last row from stretching. */}
               <FlatList
-                data={momentList}
+                data={gridMoments}
                 numColumns={4}
                 scrollEnabled={false}
                 keyExtractor={(m) => m.id}
@@ -394,6 +414,13 @@ export default function ActivityDetailScreen() {
                   </ScalePressable>
                 )}
               />
+              {!showAllGrid && momentList.length > GRID_FIRST_PAGE && (
+                <ScalePressable style={styles.showAll} onPress={() => setShowAllGrid(true)}>
+                  <Text style={styles.showAllText}>
+                    Show all {momentList.length}
+                  </Text>
+                </ScalePressable>
+              )}
             </View>
           )}
         </ScrollView>
@@ -451,7 +478,7 @@ export default function ActivityDetailScreen() {
                 <View style={styles.replayDot} />
               </View>
             </Marker>
-            {momentList.map((m) => (
+            {mapMoments.map((m) => (
               <Marker key={`rpin-${m.id}`} id={`replay-pin-${m.id}`} lngLat={[m.lng, m.lat]} pointerEvents="none">
                 <View
                   style={[
@@ -463,7 +490,7 @@ export default function ActivityDetailScreen() {
                 />
               </Marker>
             ))}
-            {momentList.map((m) => (
+            {mapMoments.map((m) => (
               <Marker
                 key={`rcard-${m.id}`}
                 id={`replay-card-${m.id}`}
@@ -679,6 +706,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.06)',
   },
+  showAll: {
+    alignSelf: 'center',
+    marginTop: 12,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: '#ECE9E1',
+  },
+  showAllText: { color: Trace.text, fontFamily: TraceFonts.displayMedium, fontSize: 13 },
   filmstripCaption: {
     color: Trace.textMuted,
     fontFamily: TraceFonts.mono,
