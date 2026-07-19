@@ -1,5 +1,6 @@
 import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, type CameraRef } from '@maplibre/maplibre-react-native';
 import { eq } from 'drizzle-orm';
+import * as Location from 'expo-location';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
@@ -103,12 +104,41 @@ export default function RecordScreen() {
   // once on mount so the default is what we say it is.
   useEffect(() => {
     if (recording || paused) return;
-    const t = setTimeout(() => cameraRef.current?.zoomTo(IDLE_ZOOM, { duration: 600 }), 900);
+    const t = setTimeout(() => {
+      if (useRecordingStore.getState().status !== 'idle') return; // restored mid-recording
+      cameraRef.current?.zoomTo(IDLE_ZOOM, { duration: 600 });
+    }, 900);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const lastLng = lastPoint?.lng;
   const lastLat = lastPoint?.lat;
+
+  // Restored session, no trail point yet (stationary since relaunch → the
+  // emission gates store nothing): the follow effect has nothing to center
+  // on, leaving the map at the style's world-level default. Center once on
+  // the live fix at recording zoom; the follow effect takes over afterwards.
+  useEffect(() => {
+    if (!(recording || paused) || lastLng != null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fix = await Location.getCurrentPositionAsync({});
+        if (cancelled || followingRef.current) return;
+        cameraRef.current?.setStop({
+          center: [fix.coords.longitude, fix.coords.latitude],
+          zoom: 15,
+          duration: 500,
+        });
+      } catch {
+        // no fix yet — the follow effect will center when the first point lands
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording, paused, lastLng]);
   useEffect(() => {
     if (!(recording || paused)) {
       followingRef.current = false;
