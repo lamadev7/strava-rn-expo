@@ -15,6 +15,7 @@ import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
 import { activities, trackPoints } from '@/db/schema';
 import { HeadingPuck } from '@/features/map/heading-puck';
+import { usePastPaths } from '@/features/map/past-paths';
 import { useMomentsStore } from '@/features/moments/store';
 import { elevationStats, estimateKcal, formatDuration, formatKm, formatPace, type ActivityType } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
@@ -54,6 +55,8 @@ export default function RecordScreen() {
   );
   const points = pointRows ?? [];
   const distanceM = activityRows?.[0]?.distanceM ?? 0;
+  // exclude the in-progress activity — it's drawn as the bright live trail
+  const pastPaths = usePastPaths(activityId);
 
   // 1 Hz clock for duration/pace display while recording (TECH_SPEC §5.5 throttle)
   const [, tick] = useState(0);
@@ -120,6 +123,17 @@ export default function RecordScreen() {
           trackUserLocation={recording || paused ? undefined : 'default'}
         />
         <HeadingPuck />
+        {/* everywhere you've been — all past routes, muted; overlaps glow brighter */}
+        {pastPaths && (
+          <GeoJSONSource id="past-paths" data={pastPaths}>
+            <Layer
+              id="past-paths-line"
+              type="line"
+              paint={{ 'line-color': Trace.accent, 'line-width': 3, 'line-opacity': 0.3 }}
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+            />
+          </GeoJSONSource>
+        )}
         {trail && (
           <GeoJSONSource id="trail" data={trail}>
             <Layer
