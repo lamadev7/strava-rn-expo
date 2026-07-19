@@ -82,6 +82,22 @@ export default function ActivityDetailScreen() {
   // ——— single-popup rule state (hooks must sit above the early return) ———
   const momentList = momentRows ?? [];
   const replaying = replayMode && playback.frame != null;
+
+  // ——— replay camera follow: glide with the marker so the user never drags ———
+  // frame updates ~30 fps; a 500 ms easeTo cadence with matching duration
+  // reads as one continuous camera glide. Paused → follow stops, map is free.
+  const frameRef = useRef(playback.frame);
+  frameRef.current = playback.frame;
+  useEffect(() => {
+    if (!(replayMode && playback.playing)) return;
+    const first = frameRef.current;
+    if (first) cameraRef.current?.setStop({ center: first.lngLat, zoom: 15.5, duration: 700 });
+    const id = setInterval(() => {
+      const frame = frameRef.current;
+      if (frame) cameraRef.current?.easeTo({ center: frame.lngLat, duration: 520 });
+    }, 500);
+    return () => clearInterval(id);
+  }, [replayMode, playback.playing]);
   const currentMomentId = replaying
     ? (momentList.filter((m) => playback.frame!.distanceM >= m.distanceM).at(-1)?.id ?? null)
     : null;
