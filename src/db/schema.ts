@@ -11,6 +11,9 @@ export const activities = sqliteTable('activities', {
   distanceM: real('distance_m').notNull().default(0),
   durationS: integer('duration_s').notNull().default(0),
   avgPaceSecPerKm: real('avg_pace_sec_per_km'),
+  /** reverse-geocoded place names for the card title ("Gairidhara → Lazimpat") */
+  startPlace: text('start_place'),
+  endPlace: text('end_place'),
   elevGainM: real('elev_gain_m'),
   elevLossM: real('elev_loss_m'),
   /** pedometer total for hike/run; null when unavailable or type is ride */

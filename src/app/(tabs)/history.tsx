@@ -10,6 +10,7 @@ import { BottomTabInset, Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
 import { activities, type ActivityRow } from '@/db/schema';
 import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
+import { composeTitle } from '@/features/recording/places';
 import { useRecordingStore } from '@/features/recording/store';
 
 const TYPE_LABEL = { run: 'Run', ride: 'Ride', hike: 'Hike' } as const;
@@ -70,10 +71,12 @@ function ActivityListRow({ activity }: { activity: ActivityRow }) {
         onPress={() => router.push(`/activity/${activity.id}`)}
         onLongPress={confirmDelete}>
         <View style={styles.rowText}>
-          <Text style={styles.rowTitle}>
-            {TYPE_LABEL[activity.type]} · {when}
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {composeTitle(activity.startPlace, activity.endPlace) ??
+              `${TYPE_LABEL[activity.type]} · ${when}`}
           </Text>
-          <Text style={styles.rowMeta}>
+          <Text style={styles.rowMeta} numberOfLines={1}>
+            {activity.startPlace || activity.endPlace ? `${TYPE_LABEL[activity.type]} · ${when} · ` : ''}
             {formatKm(activity.distanceM)} km · {formatDuration(activity.durationS)} ·{' '}
             {formatPace(activity.distanceM, activity.durationS)}
           </Text>

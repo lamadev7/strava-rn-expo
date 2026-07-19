@@ -10,6 +10,7 @@ import { deleteMomentPhoto } from '@/features/moments/photos';
 
 import { RECORDING_TASK } from './background-task';
 import { elevationStats, totalDistanceM, type ActivityType, type TrackPoint } from './geo';
+import { labelActivity } from './places';
 import { PedometerSession, tracksSteps } from './steps';
 
 /**
@@ -195,6 +196,9 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       accumulatedS: 0,
       steps: null,
     });
+    // fire-and-forget: title the card from its endpoints; failures retried by
+    // the launch-time backfill (labels stay NULL until a geocode succeeds)
+    labelActivity(activityId).catch(() => {});
   },
 
   deleteActivity: async (id) => {

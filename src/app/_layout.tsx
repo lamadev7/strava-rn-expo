@@ -17,6 +17,7 @@ import { Text } from 'react-native';
 import { Trace } from '@/constants/theme';
 import { db } from '@/db/client';
 import migrations from '@/db/migrations/migrations';
+import { backfillPlaces } from '@/features/recording/places';
 import { useRecordingStore } from '@/features/recording/store';
 
 SplashScreen.preventAutoHideAsync();
@@ -47,6 +48,7 @@ export default function RootLayout() {
     if (fontsLoaded && migrated) {
       SplashScreen.hideAsync();
       useRecordingStore.getState().recoverOrphans();
+      backfillPlaces().catch(() => {});
     }
   }, [fontsLoaded, migrated]);
 
