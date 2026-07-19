@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -275,16 +275,20 @@ export default function ActivityDetailScreen() {
                   {momentList.length} pinned to the route
                 </Text>
               </View>
-              <ScrollView
+              {/* windowed list: a ScrollView mounted (and decoded) every photo
+                  at once — with dozens of moments that alone could OOM */}
+              <FlatList
                 horizontal
+                data={momentList}
+                keyExtractor={(m) => m.id}
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filmstrip}>
-                {momentList.map((m) => (
-                  <ScalePressable
-                    key={m.id}
-                    style={styles.filmstripItem}
-                    scaleTo={0.93}
-                    onPress={startReplay}>
+                contentContainerStyle={styles.filmstrip}
+                initialNumToRender={5}
+                maxToRenderPerBatch={4}
+                windowSize={3}
+                removeClippedSubviews
+                renderItem={({ item: m }) => (
+                  <ScalePressable style={styles.filmstripItem} scaleTo={0.93} onPress={startReplay}>
                     <Image
                       source={{ uri: momentPhotoUri(m.photo) }}
                       style={styles.filmstripPhoto}
@@ -293,8 +297,8 @@ export default function ActivityDetailScreen() {
                     />
                     <Text style={styles.filmstripCaption}>{formatKm(m.distanceM)} KM</Text>
                   </ScalePressable>
-                ))}
-              </ScrollView>
+                )}
+              />
             </View>
           )}
         </ScrollView>

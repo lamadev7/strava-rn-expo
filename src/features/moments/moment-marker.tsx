@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
@@ -38,11 +38,18 @@ export function MomentMarker({
   onPress?: () => void;
 }) {
   const scale = useSharedValue(0);
+  // Lazy decode: never mount the photo while hidden. With dozens of moments,
+  // eagerly mounting every card meant dozens of simultaneous JPEG decodes —
+  // the memory spike that killed the detail screen. Mount on first reveal,
+  // keep mounted afterwards so reopen + the closing animation stay seamless.
+  const [photoMounted, setPhotoMounted] = useState(false);
 
   useEffect(() => {
     if (phase === 'open') {
+      setPhotoMounted(true);
       scale.value = withTiming(1, { duration: 380, easing: POP });
     } else if (phase === 'chip') {
+      setPhotoMounted(true);
       scale.value = withTiming(CHIP_SCALE, { duration: 300, easing: SETTLE });
     } else {
       scale.value = withTiming(0, { duration: 160, easing: SETTLE });
@@ -63,7 +70,11 @@ export function MomentMarker({
   return (
     <Animated.View style={[styles.wrap, animatedStyle]} pointerEvents={phase === 'hidden' ? 'none' : 'auto'}>
       <ScalePressable style={styles.card} onPress={onPress} scaleTo={0.95} disabled={!onPress}>
-        <Image source={{ uri }} style={styles.photo} contentFit="cover" transition={120} />
+        {photoMounted ? (
+          <Image source={{ uri }} style={styles.photo} contentFit="cover" transition={120} />
+        ) : (
+          <View style={styles.photo} />
+        )}
         <Animated.Text style={[styles.caption, captionStyle]} numberOfLines={1}>
           {caption}
         </Animated.Text>

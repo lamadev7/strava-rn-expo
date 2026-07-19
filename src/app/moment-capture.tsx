@@ -90,11 +90,30 @@ export default function MomentCaptureScreen() {
     if (permission && !permission.granted && permission.canAskAgain) requestPermission();
   }, [permission, requestPermission]);
 
+  // Cap sensor output: full-res 48 MP captures are ~30 MB each and their
+  // decodes (~190 MB RAM apiece) were memory-killing the detail screen.
+  // ~2.5K is plenty for cards/filmstrip/replay.
+  const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
+  const onCameraReady = async () => {
+    setReady(true);
+    try {
+      const sizes = (await cameraRef.current?.getAvailablePictureSizesAsync()) ?? [];
+      const parsed = sizes
+        .map((s) => ({ s, major: Math.max(...s.split('x').map(Number)) }))
+        .filter((p) => Number.isFinite(p.major));
+      const capped = parsed.filter((p) => p.major <= 2600).sort((a, b) => b.major - a.major);
+      const best = capped[0] ?? parsed.sort((a, b) => a.major - b.major)[0];
+      if (best) setPictureSize(best.s);
+    } catch {
+      // no size list — fall back to camera default; quality cap below still applies
+    }
+  };
+
   const capture = async () => {
     if (!ready || busy) return;
     setBusy(true);
     try {
-      const photo = await cameraRef.current?.takePictureAsync();
+      const photo = await cameraRef.current?.takePictureAsync({ quality: 0.8 });
       if (photo?.uri) {
         const pinned = await pinMoment(photo.uri);
         if (pinned) {
@@ -118,7 +137,8 @@ export default function MomentCaptureScreen() {
           style={StyleSheet.absoluteFill}
           facing={facing}
           flash={flash ? 'on' : 'off'}
-          onCameraReady={() => setReady(true)}
+          pictureSize={pictureSize}
+          onCameraReady={onCameraReady}
         />
       )}
       {/* design §3b scrim: darkens status bar and control zones only */}
