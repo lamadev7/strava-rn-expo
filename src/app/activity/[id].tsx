@@ -79,6 +79,17 @@ export default function ActivityDetailScreen() {
       },
     ]);
 
+  // ——— single-popup rule state (hooks must sit above the early return) ———
+  const momentList = momentRows ?? [];
+  const replaying = replayMode && playback.frame != null;
+  const currentMomentId = replaying
+    ? (momentList.filter((m) => playback.frame!.distanceM >= m.distanceM).at(-1)?.id ?? null)
+    : null;
+  // a manually opened card yields as soon as the replay pops the next one
+  useEffect(() => {
+    if (currentMomentId) setOpenMoment((cur) => (cur === currentMomentId ? cur : null));
+  }, [currentMomentId]);
+
   if (!activity) {
     return (
       <SafeAreaView style={styles.container}>
@@ -100,7 +111,6 @@ export default function ActivityDetailScreen() {
     ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }
     : null;
 
-  const replaying = replayMode && playback.frame != null;
   // path covered so far in the replay: passed points + interpolated position
   const traveled: GeoJSON.Feature<GeoJSON.LineString> | null = replaying
     ? {
@@ -113,15 +123,11 @@ export default function ActivityDetailScreen() {
       }
     : null;
 
-  const momentList = momentRows ?? [];
   // popup choreography (design §3f): pop when the replay marker passes the
   // pin, dwell for ~20% of the run's distance, then settle into a tappable chip.
-  // Single-popup rule: only the LATEST passed moment may hold the open card —
-  // the instant a new one pops, every earlier card collapses to its chip.
+  // Single-popup rule (state above the early return): only currentMomentId may
+  // hold the open card — earlier cards collapse to chips the moment a new one pops.
   const dwellM = Math.max(200, activity.distanceM * 0.2);
-  const currentMomentId = replaying
-    ? momentList.filter((m) => playback.frame!.distanceM >= m.distanceM).at(-1)?.id ?? null
-    : null;
   const phaseFor = (m: MomentRow): MomentPhase => {
     if (openMoment === m.id) return 'open';
     if (!replaying) return 'hidden';
@@ -131,11 +137,6 @@ export default function ActivityDetailScreen() {
   };
   const toggleMoment = (momentId: string) =>
     setOpenMoment((cur) => (cur === momentId ? null : momentId));
-
-  // a manually opened card also yields as soon as the replay pops the next one
-  useEffect(() => {
-    if (currentMomentId) setOpenMoment((cur) => (cur === currentMomentId ? cur : null));
-  }, [currentMomentId]);
 
   const startReplay = () => {
     setReplayMode(true);
