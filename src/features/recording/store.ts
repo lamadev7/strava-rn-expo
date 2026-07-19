@@ -212,12 +212,59 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
    * Crash recovery (TECH_SPEC §5.1): finalize activities left in
    * recording/paused by a killed app; also stop any dangling task.
    */
+  /**
+   * Launch restore: the NEWEST in-flight activity resumes exactly where it
+   * was — status, timer, trail — instead of being finalized (exiting the app
+   * must not end a run). Older strays (from crashes that left several rows
+   * behind) still get finalized into History.
+   */
   recoverOrphans: async () => {
-    await stopUpdates().catch(() => {});
-    const orphans = await db
+    const inFlight = await db
       .select()
       .from(activities)
-      .where(inArray(activities.status, ['recording', 'paused']));
+      .where(inArray(activities.status, ['recording', 'paused']))
+      .orderBy(activities.startedAt);
+    const current = inFlight.at(-1);
+    const orphans = inFlight.slice(0, -1);
+
+    if (current) {
+      const pts = await db
+        .select()
+        .from(trackPoints)
+        .where(eq(trackPoints.activityId, current.id))
+        .orderBy(trackPoints.seq);
+      // moving time so far ≈ span of recorded points; the dead-app gap
+      // (no GPS delivered) intentionally doesn't count as moving time
+      const accumulatedS =
+        pts.length > 1 ? Math.round((pts[pts.length - 1].timestamp - current.startedAt) / 1000) : 0;
+
+      let status: RecordingStatus = current.status === 'paused' ? 'paused' : 'recording';
+      if (status === 'recording') {
+        // iOS stops location delivery when the user swipe-kills the app —
+        // restart the task; Android's foreground service may still be alive
+        let started = false;
+        try {
+          started = (await Location.hasStartedLocationUpdatesAsync(RECORDING_TASK)) || (await startUpdates());
+        } catch {
+          started = false;
+        }
+        if (!started) {
+          status = 'paused';
+          await db.update(activities).set({ status: 'paused' }).where(eq(activities.id, current.id));
+        }
+      }
+      set({
+        status,
+        activityType: current.type,
+        activityId: current.id,
+        startedAt: current.startedAt,
+        accumulatedS,
+        activeSinceMs: status === 'recording' ? Date.now() : null,
+      });
+    } else {
+      await stopUpdates().catch(() => {});
+    }
+
     for (const orphan of orphans) {
       const pts = await db
         .select()
