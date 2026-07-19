@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { useLiveQuery } from 'drizzle-orm/expo-sqlite';
 import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -82,6 +83,15 @@ export default function ActivityDetailScreen() {
   // ——— single-popup rule state (hooks must sit above the early return) ———
   const momentList = momentRows ?? [];
   const replaying = replayMode && playback.frame != null;
+
+  // ——— replay rotation: app is portrait-locked; replay may go landscape ———
+  useEffect(() => {
+    if (!replayMode) return;
+    ScreenOrientation.unlockAsync().catch(() => {});
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
+  }, [replayMode]);
 
   // ——— replay camera follow: glide with the marker so the user never drags ———
   // frame updates ~30 fps; a 500 ms easeTo cadence with matching duration
