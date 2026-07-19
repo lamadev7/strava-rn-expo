@@ -175,7 +175,10 @@ export default function ActivityDetailScreen() {
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {/* ══════════ design §3e — light activity detail ══════════ */}
+      {/* ══════════ design §3e — light activity detail ══════════
+          unmounted while the replay is up: guarantees nothing shows behind
+          the replay (and frees the detail map + filmstrip during it) */}
+      {!replayMode && (
       <SafeAreaView style={styles.page} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <ScalePressable style={styles.headerButton} onPress={() => router.back()} hitSlop={8}>
@@ -330,6 +333,7 @@ export default function ActivityDetailScreen() {
           )}
         </ScrollView>
       </SafeAreaView>
+      )}
 
       {/* ══════════ design §3d — cinematic replay on the dark map ══════════ */}
       {replayMode && hasTrack && (
