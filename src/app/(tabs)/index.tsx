@@ -27,6 +27,9 @@ const ACTIVITY_TYPES: { key: ActivityType; label: string }[] = [
   { key: 'hike', label: 'Hike' },
 ];
 
+/** default map scale when idle — district level (~6 km across) */
+const IDLE_ZOOM = 13;
+
 export default function RecordScreen() {
   const router = useRouter();
   const styleKey = useMapStyle((s) => s.styleKey);
@@ -104,6 +107,16 @@ export default function RecordScreen() {
   // default if recording began before the OS puck ever got a fix.
   const cameraRef = useRef<CameraRef>(null);
   const followingRef = useRef(false);
+
+  // Idle default zoom: initialViewState only applies on a fresh map, and the
+  // puck-tracking mode keeps its own zoom — enforce district scale explicitly
+  // once on mount so the default is what we say it is.
+  useEffect(() => {
+    if (recording || paused) return;
+    const t = setTimeout(() => cameraRef.current?.zoomTo(IDLE_ZOOM, { duration: 600 }), 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const lastLng = lastPoint?.lng;
   const lastLat = lastPoint?.lat;
   useEffect(() => {
@@ -136,7 +149,7 @@ export default function RecordScreen() {
             at the user's current zoom; idle tracks the OS puck */}
         <Camera
           ref={cameraRef}
-          initialViewState={{ zoom: 13 }}
+          initialViewState={{ zoom: IDLE_ZOOM }}
           trackUserLocation={recording || paused ? undefined : 'default'}
         />
         <HeadingPuck />
