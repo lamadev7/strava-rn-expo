@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,7 +14,8 @@ import { MapStyleSwitcher } from '@/components/map-style-switcher';
 import { ScalePressable } from '@/components/scale-pressable';
 import { Trace, TraceFonts } from '@/constants/theme';
 import { db } from '@/db/client';
-import { activities, moments, trackPoints, type MomentRow } from '@/db/schema';
+import { activities, moments, trackPoints } from '@/db/schema';
+import { useGalleryMoments } from '@/features/moments/gallery-moments';
 import { MomentMarker, type MomentPhase } from '@/features/moments/moment-marker';
 import { momentPhotoUri } from '@/features/moments/photos';
 import { usePlayback } from '@/features/playback/use-playback';
@@ -23,6 +24,18 @@ import { useRecordingStore } from '@/features/recording/store';
 import { MAP_STYLES, useMapStyle, type MapStyleKey } from '@/features/settings/map-style';
 
 const TYPE_LABEL = { run: 'Run', ride: 'Ride', hike: 'Hike' } as const;
+
+/** unified moment card model: in-app captures (DB) + gallery photos (live) */
+type DisplayMoment = {
+  id: string;
+  uri: string;
+  lat: number;
+  lng: number;
+  distanceM: number;
+  elapsedS: number;
+  place: string | null;
+  fromGallery: boolean;
+};
 
 /** design §3d — the cinematic replay always runs on the dark basemap */
 const REPLAY_BG = '#16171B';
@@ -81,7 +94,28 @@ export default function ActivityDetailScreen() {
     ]);
 
   // ——— single-popup rule state (hooks must sit above the early return) ———
-  const momentList = momentRows ?? [];
+  // Moments = in-app captures (DB) + photos shot with ANY camera during the
+  // activity's time window (live from the photo library, nothing stored).
+  const points = pointRows ?? [];
+  const galleryMoments = useGalleryMoments(activity, points);
+  const momentList: DisplayMoment[] = useMemo(() => {
+    const own: DisplayMoment[] = (momentRows ?? []).map((m) => ({
+      id: m.id,
+      uri: momentPhotoUri(m.photo),
+      lat: m.lat,
+      lng: m.lng,
+      distanceM: m.distanceM,
+      elapsedS: m.elapsedS,
+      place: m.place,
+      fromGallery: false,
+    }));
+    const gallery: DisplayMoment[] = galleryMoments.map((g) => ({
+      ...g,
+      place: null,
+      fromGallery: true,
+    }));
+    return [...own, ...gallery].sort((a, b) => a.distanceM - b.distanceM);
+  }, [momentRows, galleryMoments]);
   const replaying = replayMode && playback.frame != null;
 
   // ——— 10 s auto-close: any open card collapses on its own ———
@@ -140,7 +174,6 @@ export default function ActivityDetailScreen() {
     );
   }
 
-  const points = pointRows ?? [];
   const coords = points.map((p) => [p.lng, p.lat] as [number, number]);
   const lngs = coords.map((c) => c[0]);
   const lats = coords.map((c) => c[1]);
@@ -170,7 +203,7 @@ export default function ActivityDetailScreen() {
   // Single-popup rule (state above the early return): only currentMomentId may
   // hold the open card — earlier cards collapse to chips the moment a new one pops.
   const dwellM = Math.max(200, activity.distanceM * 0.2);
-  const phaseFor = (m: MomentRow): MomentPhase => {
+  const phaseFor = (m: DisplayMoment): MomentPhase => {
     if (openMoment === m.id) return 'open';
     if (!replaying) return 'hidden';
     const gone = playback.frame!.distanceM - m.distanceM;
@@ -283,7 +316,7 @@ export default function ActivityDetailScreen() {
                     anchor="bottom"
                     pointerEvents="box-none">
                     <MomentMarker
-                      uri={momentPhotoUri(m.photo)}
+                      uri={m.uri}
                       caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
                       place={m.place}
                       phase={openMoment === m.id ? 'open' : 'hidden'}
@@ -351,7 +384,7 @@ export default function ActivityDetailScreen() {
                 renderItem={({ item: m }) => (
                   <ScalePressable style={styles.filmstripItem} scaleTo={0.93} onPress={startReplay}>
                     <Image
-                      source={{ uri: momentPhotoUri(m.photo) }}
+                      source={{ uri: m.uri }}
                       style={styles.filmstripPhoto}
                       contentFit="cover"
                       transition={120}
@@ -437,7 +470,7 @@ export default function ActivityDetailScreen() {
                 anchor="bottom"
                 pointerEvents="box-none">
                 <MomentMarker
-                  uri={momentPhotoUri(m.photo)}
+                  uri={m.uri}
                   caption={`${formatKm(m.distanceM)} KM · ${formatDuration(m.elapsedS)}`}
                   place={m.place}
                   phase={phaseFor(m)}
