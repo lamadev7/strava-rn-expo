@@ -71,6 +71,31 @@ async function startUpdates(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Elapsed-time heartbeat: while recording, persist the timer into
+ * activities.duration_s every few seconds so a killed app restores its
+ * clock (max ~3 s loss). GPS points can't serve this — short or indoor
+ * stretches store none.
+ */
+let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+function startHeartbeat(activityId: string, elapsedS: () => number) {
+  stopHeartbeat();
+  heartbeat = setInterval(() => {
+    db.update(activities)
+      .set({ durationS: Math.round(elapsedS()) })
+      .where(eq(activities.id, activityId))
+      .run();
+  }, 3000);
+}
+
+function stopHeartbeat() {
+  if (heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+}
+
 async function stopUpdates() {
   if (await Location.hasStartedLocationUpdatesAsync(RECORDING_TASK)) {
     await Location.stopLocationUpdatesAsync(RECORDING_TASK);
@@ -128,16 +153,22 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
       const tracking = await pedometer.start(startedAt, (steps) => set({ steps }));
       if (tracking) set({ steps: 0 });
     }
+    startHeartbeat(activityId, get().elapsedS);
   },
 
   pause: async () => {
     const { status, elapsedS, activityId } = get();
     if (status !== 'recording') return;
+    stopHeartbeat();
     await stopUpdates();
     pedometer.pause();
-    set({ status: 'paused', accumulatedS: elapsedS(), activeSinceMs: null });
+    const pausedAtS = Math.round(elapsedS());
+    set({ status: 'paused', accumulatedS: pausedAtS, activeSinceMs: null });
     if (activityId)
-      await db.update(activities).set({ status: 'paused' }).where(eq(activities.id, activityId));
+      await db
+        .update(activities)
+        .set({ status: 'paused', durationS: pausedAtS })
+        .where(eq(activities.id, activityId));
   },
 
   resume: async () => {
@@ -158,11 +189,13 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     }
     set({ status: 'recording', activeSinceMs: Date.now() });
     pedometer.resume((steps) => set({ steps }));
+    startHeartbeat(activityId, get().elapsedS);
   },
 
   stop: async () => {
     const { status, activityId, elapsedS } = get();
     if (status === 'idle' || !activityId) return;
+    stopHeartbeat();
     await stopUpdates();
     const endedAt = Date.now();
     const steps = await pedometer.stop(endedAt).catch(() => null);
@@ -233,10 +266,12 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         .from(trackPoints)
         .where(eq(trackPoints.activityId, current.id))
         .orderBy(trackPoints.seq);
-      // moving time so far ≈ span of recorded points; the dead-app gap
-      // (no GPS delivered) intentionally doesn't count as moving time
-      const accumulatedS =
+      // timer restore: heartbeat-persisted duration_s (written every 3 s while
+      // recording) beats the point span — short/indoor stretches store no
+      // points at all. Dead-app gap intentionally doesn't count.
+      const pointSpanS =
         pts.length > 1 ? Math.round((pts[pts.length - 1].timestamp - current.startedAt) / 1000) : 0;
+      const accumulatedS = Math.max(current.durationS ?? 0, pointSpanS);
 
       let status: RecordingStatus = current.status === 'paused' ? 'paused' : 'recording';
       if (status === 'recording') {
@@ -261,6 +296,7 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
         accumulatedS,
         activeSinceMs: status === 'recording' ? Date.now() : null,
       });
+      if (status === 'recording') startHeartbeat(current.id, get().elapsedS);
     } else {
       await stopUpdates().catch(() => {});
     }
