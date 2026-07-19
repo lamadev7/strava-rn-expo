@@ -72,7 +72,10 @@
         {
           "motionPermission": "Trace uses motion data to count your steps while you record a walk or run."
         }
-      ]
+      ],
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
