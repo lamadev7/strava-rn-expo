@@ -45,7 +45,7 @@ export const useMomentsStore = create<MomentsState>((set) => ({
 
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const photo = `${id}.jpg`;
-    storeMomentPhoto(photoUri, photo);
+    await storeMomentPhoto(photoUri, photo);
 
     const distanceM = activity?.distanceM ?? 0;
     await db.insert(moments).values({

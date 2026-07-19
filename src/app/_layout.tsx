@@ -17,6 +17,8 @@ import { Text } from 'react-native';
 import { Trace } from '@/constants/theme';
 import { db } from '@/db/client';
 import migrations from '@/db/migrations/migrations';
+import { moments } from '@/db/schema';
+import { migrateMomentPhotos } from '@/features/moments/photos';
 import { backfillPlaces } from '@/features/recording/places';
 import { useRecordingStore } from '@/features/recording/store';
 
@@ -49,6 +51,11 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
       useRecordingStore.getState().recoverOrphans();
       backfillPlaces().catch(() => {});
+      // Phase 2 healing: shrink pre-thumbnail 48 MP captures, one at a time
+      db.select({ photo: moments.photo })
+        .from(moments)
+        .then((rows) => migrateMomentPhotos(rows.map((r) => r.photo)))
+        .catch(() => {});
     }
   }, [fontsLoaded, migrated]);
 

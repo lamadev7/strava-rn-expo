@@ -17,7 +17,7 @@ import { db } from '@/db/client';
 import { activities, moments, trackPoints } from '@/db/schema';
 import { useGalleryMoments } from '@/features/moments/gallery-moments';
 import { MomentMarker, type MomentPhase } from '@/features/moments/moment-marker';
-import { momentPhotoUri } from '@/features/moments/photos';
+import { momentThumbUri } from '@/features/moments/photos';
 import { usePlayback } from '@/features/playback/use-playback';
 import { formatDuration, formatKm, formatPace } from '@/features/recording/geo';
 import { useRecordingStore } from '@/features/recording/store';
@@ -105,7 +105,7 @@ export default function ActivityDetailScreen() {
   const momentList: DisplayMoment[] = useMemo(() => {
     const own: DisplayMoment[] = (momentRows ?? []).map((m) => ({
       id: m.id,
-      uri: momentPhotoUri(m.photo),
+      uri: momentThumbUri(m.photo),
       lat: m.lat,
       lng: m.lng,
       distanceM: m.distanceM,
