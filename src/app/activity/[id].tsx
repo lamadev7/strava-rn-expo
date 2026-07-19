@@ -369,27 +369,28 @@ export default function ActivityDetailScreen() {
                   {momentList.length} pinned to the route
                 </Text>
               </View>
-              {/* windowed list: a ScrollView mounted (and decoded) every photo
-                  at once — with dozens of moments that alone could OOM */}
+              {/* 4-per-row grid flowing with the page scroll. Cells decode at
+                  thumbnail size (expo-image downsamples to the view), so even
+                  dozens of moments stay cheap. flex-based cells adapt to any
+                  screen width; maxWidth keeps a short last row from stretching. */}
               <FlatList
-                horizontal
                 data={momentList}
+                numColumns={4}
+                scrollEnabled={false}
                 keyExtractor={(m) => m.id}
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filmstrip}
-                initialNumToRender={5}
-                maxToRenderPerBatch={4}
-                windowSize={3}
-                removeClippedSubviews
+                columnWrapperStyle={styles.filmGridRow}
+                contentContainerStyle={styles.filmGrid}
                 renderItem={({ item: m }) => (
-                  <ScalePressable style={styles.filmstripItem} scaleTo={0.93} onPress={startReplay}>
+                  <ScalePressable style={styles.filmCell} scaleTo={0.93} onPress={startReplay}>
                     <Image
                       source={{ uri: m.uri }}
-                      style={styles.filmstripPhoto}
+                      style={styles.filmCellPhoto}
                       contentFit="cover"
                       transition={120}
                     />
-                    <Text style={styles.filmstripCaption}>{formatKm(m.distanceM)} KM</Text>
+                    <Text style={styles.filmstripCaption} numberOfLines={1}>
+                      {formatKm(m.distanceM)} KM
+                    </Text>
                   </ScalePressable>
                 )}
               />
@@ -667,11 +668,12 @@ const styles = StyleSheet.create({
   },
   momentsTitle: { color: Trace.text, fontFamily: TraceFonts.display, fontSize: 14 },
   momentsCount: { color: Trace.textMuted, fontFamily: TraceFonts.body, fontSize: 12 },
-  filmstrip: { gap: 10 },
-  filmstripItem: { alignItems: 'center', gap: 5 },
-  filmstripPhoto: {
-    width: 86,
-    height: 86,
+  filmGrid: { gap: 10 },
+  filmGridRow: { gap: 10 },
+  filmCell: { flex: 1, maxWidth: '25%', alignItems: 'center', gap: 5 },
+  filmCellPhoto: {
+    width: '100%',
+    aspectRatio: 1,
     borderRadius: 14,
     backgroundColor: '#ECE9E1',
     borderWidth: 1,
